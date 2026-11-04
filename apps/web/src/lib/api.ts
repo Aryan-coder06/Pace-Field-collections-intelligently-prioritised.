@@ -7,7 +7,12 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
       return await fetch(`${API}${path}`, {
         ...init,
         credentials: "include",
-        headers: { "Content-Type": "application/json", ...init?.headers },
+        headers: {
+          ...(init?.body instanceof FormData
+            ? {}
+            : { "Content-Type": "application/json" }),
+          ...init?.headers,
+        },
       });
     } catch {
       throw new Error(
@@ -25,7 +30,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(body?.detail ?? "Something went wrong. Please try again.");
+    const detail = body?.detail;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : (detail?.message ??
+            detail?.code ??
+            "Something went wrong. Please try again."),
+    );
   }
   return response.json() as Promise<T>;
 }

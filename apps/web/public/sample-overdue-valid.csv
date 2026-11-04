@@ -1,0 +1,7 @@
+loan_id,borrower_name,outstanding_amount,dpd,pincode,borrower_phone,business_category,overdue_amount,address
+LN-13001,Navya Metal Works,425000,11,452001,+919000003001,Working capital,34000,Industrial Area Indore
+LN-13002,Satvik Packaging,610000,22,452003,+919000003002,Equipment finance,58000,Sanwer Road Indore
+LN-13003,Lotus Fabrication,295000,8,452007,+919000003003,Working capital,18000,Dewas Naka Indore
+LN-13004,Veda Industrial Supply,780000,29,452010,+919000003004,Business term loan,95000,Palasia Indore
+LN-13005,Pragati Machine Tools,340000,17,452015,+919000003005,Working capital,26000,Rau Indore
+LN-13006,Unsupported Area Works,290000,14,452099,+919000003006,Working capital,22000,Indore

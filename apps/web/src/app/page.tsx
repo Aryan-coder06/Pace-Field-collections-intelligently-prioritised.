@@ -2,6 +2,7 @@
 import Link from "next/link";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Button } from "@/components/ui/button";
+import { ContactButton } from "@/components/contact-button";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,12 +14,12 @@ import {
   ChevronRight,
   ContactRound,
   MapPin,
-  Phone,
   ShieldCheck,
   WalletCards,
   LogOut,
   Sparkles,
   UsersRound,
+  FileUp,
 } from "lucide-react";
 import { request, type Loan, type User } from "@/lib/api";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -94,11 +95,36 @@ function Officer({ user }: { user: User }) {
       }>("/officer/today"),
   });
   const [active, setActive] = useState("Today");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("priority");
+  const [filter, setFilter] = useState("all");
   const online = useSyncExternalStore(
     subscribeToConnection,
     getConnectionState,
     getServerConnectionState,
   );
+  const visible = [...(q.data?.items ?? [])]
+    .filter((item) =>
+      `${item.borrower} ${item.loan_number}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+    )
+    .filter(
+      (item) =>
+        filter === "all" ||
+        (filter === "touched"
+          ? item.touched
+          : filter === "open"
+            ? item.promise_status === "OPEN"
+            : item.promise_status === "BROKEN"),
+    )
+    .sort((a, b) =>
+      sort === "dpd"
+        ? b.dpd - a.dpd
+        : sort === "outstanding"
+          ? Number(b.outstanding) - Number(a.outstanding)
+          : b.score - a.score,
+    );
   return (
     <div className="officer-shell">
       <header className="mobile-head">
@@ -183,12 +209,43 @@ function Officer({ user }: { user: User }) {
                 <span className="eyebrow">YOUR QUEUE</span>
                 <h2>Prioritised for today</h2>
               </div>
-              <span className="queue-count">
-                {q.data!.items.length} accounts
-              </span>
+              <span className="queue-count">{visible.length} accounts</span>
+            </div>
+            <div className="queue-controls">
+              <input
+                aria-label="Search borrower or loan ID"
+                placeholder="Search borrower or loan ID"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <select
+                aria-label="Sort accounts"
+                value={sort}
+                onChange={(event) => setSort(event.target.value)}
+              >
+                <option value="priority">Priority</option>
+                <option value="dpd">Highest DPD</option>
+                <option value="outstanding">Outstanding</option>
+              </select>
+            </div>
+            <div className="queue-filters" aria-label="Filter accounts">
+              {[
+                ["all", "All"],
+                ["open", "Open promises"],
+                ["broken", "Broken"],
+                ["touched", "Touched"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={filter === value ? "active" : ""}
+                  onClick={() => setFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             <div className="queue">
-              {q.data!.items.map((loan, i) => (
+              {visible.map((loan, i) => (
                 <article className="loan-card surface" key={loan.id}>
                   <div className="rank">{String(i + 1).padStart(2, "0")}</div>
                   <div className="loan-content">
@@ -221,14 +278,19 @@ function Officer({ user }: { user: User }) {
                       <ShieldCheck size={14} />
                       {loan.reasons.slice(0, 2).join(" · ")}
                     </div>
+                    <div className="queue-context">
+                      {loan.promise_status && (
+                        <span>{loan.promise_status} promise</span>
+                      )}
+                      {loan.touched && <span>Logged today</span>}
+                      <span>{loan.next_action}</span>
+                    </div>
                     <div className="card-actions">
-                      <a
+                      <ContactButton
+                        loanId={loan.id}
+                        borrower={loan.borrower}
                         className="card-action"
-                        href={`tel:${loan.phone}`}
-                        aria-label={`Call ${loan.borrower}`}
-                      >
-                        <Phone size={16} /> Call
-                      </a>
+                      />
                       <a
                         className="card-action"
                         href={`https://maps.google.com/?q=${encodeURIComponent(`${loan.address} ${loan.pincode} Indore`)}`}
@@ -250,12 +312,18 @@ function Officer({ user }: { user: User }) {
                 </article>
               ))}
             </div>
-            {q.data!.items.length === 0 && (
+            {visible.length === 0 && (
               <div className="surface empty">
                 <Check size={22} />
-                <h2>You’re clear for today.</h2>
+                <h2>
+                  {q.data!.items.length
+                    ? "No accounts match these filters."
+                    : "You’re clear for today."}
+                </h2>
                 <p className="muted">
-                  There are no accounts assigned to your queue yet.
+                  {q.data!.items.length
+                    ? "Try a different search or filter."
+                    : "There are no accounts assigned to your queue yet."}
                 </p>
               </div>
             )}
@@ -322,10 +390,39 @@ function Manager({ user }: { user: User }) {
         { time: string; officer: string; borrower: string; event: string }[]
       >("/manager/recent-activity"),
   });
+  const analytics = useQuery({
+    queryKey: ["manager-analytics"],
+    queryFn: () =>
+      request<{
+        buckets: { "1_30": number; "31_60": number; "61_plus": number };
+        assigned: number;
+        unassigned: number;
+        due_today: number;
+        open_disputes: number;
+        outcomes_today: number;
+        same_day_logging_rate: number | null;
+        roll_rate: {
+          target: number;
+          brief_baseline: number;
+          periods: {
+            start: string;
+            follow_up: string;
+            eligible: number;
+            observed: number;
+            missing: number;
+            rolled: number;
+            rate: number | null;
+            coverage: number | null;
+          }[];
+        };
+      }>("/manager/analytics/overview"),
+  });
   const nav = [
     ["Overview", Building2],
     ["Officers", ContactRound],
     ["Recent activity", Activity],
+    ["Promises", WalletCards],
+    ["Imports", FileUp],
   ] as const;
   return (
     <div className="manager-shell">
@@ -352,7 +449,11 @@ function Manager({ user }: { user: User }) {
                   ? "#overview"
                   : label === "Officers"
                     ? "#officers"
-                    : "#activity"
+                    : label === "Imports"
+                      ? "/imports"
+                      : label === "Promises"
+                        ? "/promises"
+                        : "#activity"
               }
               className={`nav-item ${tab === label ? "active" : ""}`}
               onClick={() => setTab(label)}
@@ -501,6 +602,17 @@ function Manager({ user }: { user: User }) {
                   </span>
                   <ArrowUpRight size={16} />
                 </a>
+                <a className="exception-row" href="#activity">
+                  <span className="exception-mark">!</span>
+                  <span>
+                    <b>Open disputes</b>
+                    <small>
+                      {analytics.data?.open_disputes ?? 0} require manager
+                      review
+                    </small>
+                  </span>
+                  <ArrowUpRight size={16} />
+                </a>
                 <div className="exception-row">
                   <span className="exception-mark amber">◷</span>
                   <span>
@@ -518,6 +630,65 @@ function Manager({ user }: { user: User }) {
                 </a>
               </section>
             </div>
+            {analytics.isLoading ? (
+              <div className="surface skeleton" />
+            ) : analytics.isError ? (
+              <ErrorBox
+                message={analytics.error.message}
+                retry={() => analytics.refetch()}
+              />
+            ) : (
+              analytics.data && (
+                <section className="surface analytics-strip">
+                  <div>
+                    <span className="eyebrow">OBSERVED ROLL RATE</span>
+                    <strong>
+                      {analytics.data.roll_rate.periods.at(-1)?.rate ?? "—"}%
+                    </strong>
+                    <small>
+                      Target {analytics.data.roll_rate.target}% · brief baseline{" "}
+                      {analytics.data.roll_rate.brief_baseline}%
+                    </small>
+                    <small>
+                      {analytics.data.roll_rate.periods.at(-1)?.eligible ?? 0}{" "}
+                      eligible ·{" "}
+                      {analytics.data.roll_rate.periods.at(-1)?.observed ?? 0}{" "}
+                      followed ·{" "}
+                      {analytics.data.roll_rate.periods.at(-1)?.missing ?? 0}{" "}
+                      missing
+                    </small>
+                  </div>
+                  <div>
+                    <span className="eyebrow">DPD DISTRIBUTION</span>
+                    <div className="dpd-bars">
+                      <span style={{ flex: analytics.data.buckets["1_30"] }} />
+                      <span style={{ flex: analytics.data.buckets["31_60"] }} />
+                      <span
+                        style={{ flex: analytics.data.buckets["61_plus"] }}
+                      />
+                    </div>
+                    <small>
+                      1–30: {analytics.data.buckets["1_30"]} · 31–60:{" "}
+                      {analytics.data.buckets["31_60"]} · 61+:{" "}
+                      {analytics.data.buckets["61_plus"]}
+                    </small>
+                  </div>
+                  <div>
+                    <span className="eyebrow">OPERATIONS TODAY</span>
+                    <strong>{analytics.data.outcomes_today} outcomes</strong>
+                    <small>
+                      {analytics.data.assigned} assigned ·{" "}
+                      {analytics.data.unassigned} unassigned
+                    </small>
+                    <small>
+                      {analytics.data.due_today} promises due ·{" "}
+                      {analytics.data.same_day_logging_rate ?? "—"}% logged same
+                      day
+                    </small>
+                  </div>
+                </section>
+              )
+            )}
             <section className="command-panel" id="officers">
               <div className="panel-head">
                 <div>
@@ -527,6 +698,9 @@ function Manager({ user }: { user: User }) {
                 <span className="command-count">
                   <UsersRound size={15} /> {overview.data!.officers} officers on
                   route
+                  <Link href="/assignments" className="command-link">
+                    Manage assignments <ArrowUpRight size={14} />
+                  </Link>
                 </span>
               </div>
               {officers.isLoading ? (

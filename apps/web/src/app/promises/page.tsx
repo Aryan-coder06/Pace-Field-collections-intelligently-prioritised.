@@ -1,17 +1,20 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CalendarClock } from "lucide-react";
-import { request, type Loan } from "@/lib/api";
+import { request, type Loan, type User } from "@/lib/api";
+import { contactOpen } from "@/components/contact-button";
 
 type PromiseItem = Loan & {
   amount: string;
   promise_date: string;
   promise_status: string;
   promise_id: number;
+  version: number;
+  officer?: string;
 };
-type Tab = "Due today" | "Upcoming" | "Broken";
+type Tab = "Due today" | "Upcoming" | "Broken" | "Kept";
 const compact = (value: string | number) =>
   `₹${(Number(value) / 100000).toFixed(2)}L`;
 const today = new Intl.DateTimeFormat("en-CA", {
@@ -19,18 +22,62 @@ const today = new Intl.DateTimeFormat("en-CA", {
 }).format(new Date());
 
 export default function Promises() {
+  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("Due today");
+  const [selected, setSelected] = useState<PromiseItem | null>(null);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [reminderText, setReminderText] = useState("");
+  const [language, setLanguage] = useState("en");
+  const [simulated, setSimulated] = useState(false);
+  const [history, setHistory] = useState<
+    { from: string; to: string; reason: string; time: string }[]
+  >([]);
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => request<User>("/auth/me"),
+  });
   const q = useQuery({
     queryKey: ["promises"],
-    queryFn: () => request<PromiseItem[]>("/officer/promises"),
+    queryFn: () =>
+      request<PromiseItem[]>(
+        me.data?.role === "BRANCH_MANAGER"
+          ? "/manager/promises"
+          : "/officer/promises",
+      ),
+    enabled: Boolean(me.data),
   });
   const items = q.data?.filter((item) =>
-    tab === "Broken"
-      ? item.promise_status === "BROKEN"
-      : tab === "Upcoming"
-        ? item.promise_status === "OPEN" && item.promise_date > today
-        : item.promise_status === "OPEN" && item.promise_date <= today,
+    tab === "Kept"
+      ? item.promise_status === "KEPT"
+      : tab === "Broken"
+        ? item.promise_status === "BROKEN"
+        : tab === "Upcoming"
+          ? item.promise_status === "OPEN" && item.promise_date > today
+          : item.promise_status === "OPEN" && item.promise_date <= today,
   );
+  async function update(action: "cancel" | "mark-kept") {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request(`/promises/${selected.promise_id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ expected_version: selected.version, reason }),
+      });
+      setSelected(null);
+      qc.invalidateQueries({ queryKey: ["promises"] });
+      qc.invalidateQueries({ queryKey: ["loan", String(selected.id)] });
+      qc.invalidateQueries({ queryKey: ["manager"] });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not update promise.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div className="officer-shell">
       <header className="mobile-head">
@@ -38,7 +85,8 @@ export default function Promises() {
           <span className="brand-mark">P</span>pace
         </Link>
         <Link href="/" className="back-link">
-          <ArrowLeft size={16} /> Queue
+          <ArrowLeft size={16} />{" "}
+          {me.data?.role === "BRANCH_MANAGER" ? "Overview" : "Queue"}
         </Link>
       </header>
       <main className="promise-wrap">
@@ -48,15 +96,17 @@ export default function Promises() {
           Commitments made by the borrowers in your portfolio.
         </p>
         <div className="promise-tabs">
-          {(["Due today", "Upcoming", "Broken"] as Tab[]).map((name) => (
-            <button
-              key={name}
-              onClick={() => setTab(name)}
-              className={tab === name ? "active" : ""}
-            >
-              {name}
-            </button>
-          ))}
+          {(["Due today", "Upcoming", "Broken", "Kept"] as Tab[]).map(
+            (name) => (
+              <button
+                key={name}
+                onClick={() => setTab(name)}
+                className={tab === name ? "active" : ""}
+              >
+                {name}
+              </button>
+            ),
+          )}
         </div>
         {q.isLoading ? (
           <div className="surface skeleton" />
@@ -70,19 +120,18 @@ export default function Promises() {
         ) : items?.length ? (
           <div className="promise-list">
             {items.map((p) => (
-              <Link
-                href={`/loans/${p.id}`}
-                className="surface promise-card"
-                key={p.promise_id}
-              >
+              <article className="surface promise-card" key={p.promise_id}>
                 <span
                   className={`pill ${p.promise_status === "BROKEN" ? "broken" : "medium"}`}
                 >
                   {p.promise_status}
                 </span>
-                <h3>{p.borrower}</h3>
+                <Link href={`/loans/${p.id}`}>
+                  <h3>{p.borrower}</h3>
+                </Link>
                 <span className="muted">
                   {p.loan_number} · {p.dpd} DPD
+                  {p.officer ? ` · ${p.officer}` : ""}
                 </span>
                 <div className="promise-bottom">
                   <b>{compact(p.amount)}</b>
@@ -98,7 +147,29 @@ export default function Promises() {
                     )}
                   </span>
                 </div>
-              </Link>
+                <button
+                  className="promise-manage"
+                  onClick={async () => {
+                    setSelected(p);
+                    setError("");
+                    setReason("");
+                    setReminderText("");
+                    setSimulated(false);
+                    setHistory(
+                      await request<
+                        {
+                          from: string;
+                          to: string;
+                          reason: string;
+                          time: string;
+                        }[]
+                      >(`/promises/${p.promise_id}/history`).catch(() => []),
+                    );
+                  }}
+                >
+                  Manage promise →
+                </button>
+              </article>
             ))}
           </div>
         ) : (
@@ -109,7 +180,9 @@ export default function Promises() {
                 ? "No promises due today"
                 : tab === "Broken"
                   ? "No broken promises"
-                  : "No upcoming promises"}
+                  : tab === "Kept"
+                    ? "No kept promises"
+                    : "No upcoming promises"}
             </h2>
             <p className="muted">
               This list will update as borrower commitments change.
@@ -117,20 +190,165 @@ export default function Promises() {
           </div>
         )}
       </main>
-      <nav className="bottom-nav">
-        <Link href="/">
-          <span>Today</span>
-        </Link>
-        <Link className="selected" href="/promises">
-          <span>Promises</span>
-        </Link>
-        <Link href="/activity">
-          <span>Activity</span>
-        </Link>
-        <Link href="/profile">
-          <span>Profile</span>
-        </Link>
-      </nav>
+      {selected && (
+        <div className="sheet-backdrop" onClick={() => setSelected(null)}>
+          <section
+            className="outcome-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Manage promise"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span className="eyebrow">PROMISE LIFECYCLE</span>
+            <h2>{selected.borrower}</h2>
+            <p className="muted">
+              ₹{Number(selected.amount).toLocaleString("en-IN")} due{" "}
+              {selected.promise_date} · {selected.promise_status}
+            </p>
+            <h3>History</h3>
+            {history.length ? (
+              history.map((entry, i) => (
+                <p className="promise-history" key={i}>
+                  {entry.from} → {entry.to} · {entry.reason}
+                </p>
+              ))
+            ) : (
+              <p className="muted">No prior transitions.</p>
+            )}
+            <div className="reminder-preview">
+              <h3>Reminder preview</h3>
+              <div className="sheet-actions">
+                <select
+                  aria-label="Reminder language"
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value)}
+                >
+                  <option value="en">English</option>
+                  <option value="hi">हिन्दी</option>
+                </select>
+                <button
+                  className="btn secondary"
+                  onClick={async () => {
+                    setError("");
+                    try {
+                      setReminderText(
+                        (
+                          await request<{ message: string }>(
+                            `/promises/${selected.promise_id}/reminder?language=${language}`,
+                          )
+                        ).message,
+                      );
+                    } catch (cause) {
+                      setError(
+                        cause instanceof Error
+                          ? cause.message
+                          : "Could not preview reminder.",
+                      );
+                    }
+                  }}
+                >
+                  Preview
+                </button>
+              </div>
+              {reminderText && (
+                <>
+                  <p>{reminderText}</p>
+                  {me.data?.role === "FIELD_OFFICER" && (
+                    <button
+                      className="btn secondary"
+                      disabled={busy || !contactOpen()}
+                      title={
+                        !contactOpen() ? "Contact allowed 8 AM–7 PM" : undefined
+                      }
+                      onClick={async () => {
+                        setBusy(true);
+                        setError("");
+                        try {
+                          await request(
+                            `/promises/${selected.promise_id}/send-reminder?language=${language}`,
+                            { method: "POST" },
+                          );
+                          setSimulated(true);
+                        } catch (cause) {
+                          setError(
+                            cause instanceof Error
+                              ? cause.message
+                              : "Could not simulate delivery.",
+                          );
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Simulate delivery
+                    </button>
+                  )}
+                  {simulated && (
+                    <small role="status">
+                      Simulated delivery logged. No real message was sent.
+                    </small>
+                  )}
+                </>
+              )}
+            </div>
+            <label>
+              Reason for update
+              <input
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Enter a clear reason"
+              />
+            </label>
+            {error && (
+              <p className="import-alert" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="sheet-actions">
+              <button
+                className="btn secondary"
+                onClick={() => setSelected(null)}
+              >
+                Close
+              </button>
+              {selected.promise_status === "OPEN" && (
+                <button
+                  className="btn secondary"
+                  disabled={busy || reason.trim().length < 5}
+                  onClick={() => update("cancel")}
+                >
+                  Cancel promise
+                </button>
+              )}
+              {["OPEN", "BROKEN"].includes(selected.promise_status) && (
+                <button
+                  className="btn"
+                  disabled={busy || reason.trim().length < 5}
+                  onClick={() => update("mark-kept")}
+                >
+                  Mark kept (mock)
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+      {me.data?.role !== "BRANCH_MANAGER" && (
+        <nav className="bottom-nav">
+          <Link href="/">
+            <span>Today</span>
+          </Link>
+          <Link className="selected" href="/promises">
+            <span>Promises</span>
+          </Link>
+          <Link href="/activity">
+            <span>Activity</span>
+          </Link>
+          <Link href="/profile">
+            <span>Profile</span>
+          </Link>
+        </nav>
+      )}
     </div>
   );
 }

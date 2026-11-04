@@ -3,13 +3,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  MapPin,
-  Phone,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowLeft, ArrowUpRight, MapPin, ShieldCheck } from "lucide-react";
+import { ContactButton } from "@/components/contact-button";
+import { OutcomeSheet } from "@/components/outcome-sheet";
 import { request, type Loan } from "@/lib/api";
 const money = (n: string | number) =>
   new Intl.NumberFormat("en-IN", {
@@ -147,9 +143,7 @@ export default function LoanDetail() {
             <span className="muted">{l.address}</span>
           </div>
           <div className="contact-actions">
-            <a className="btn" href={`tel:${l.phone}`}>
-              <Phone size={16} /> Call
-            </a>
+            <ContactButton loanId={l.id} borrower={l.borrower} />
             <a
               className="btn secondary"
               href={`https://maps.google.com/?q=${encodeURIComponent(`${l.address} ${l.pincode} Indore`)}`}
@@ -167,30 +161,11 @@ export default function LoanDetail() {
           Log outcome <ArrowUpRight size={16} />
         </button>
         {showOutcome && (
-          <div
-            className="sheet-backdrop"
-            role="presentation"
-            onClick={() => setShowOutcome(false)}
-          >
-            <section
-              className="outcome-sheet"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="outcome-title"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="eyebrow">NEXT WORKFLOW MODULE</span>
-              <h2 id="outcome-title">Outcome logging is coming next</h2>
-              <p className="muted">
-                This account is ready for a field outcome flow. Stage 2 will add
-                paid, promise to pay, not reachable and dispute outcomes with a
-                complete audit record.
-              </p>
-              <button className="btn" onClick={() => setShowOutcome(false)}>
-                Got it
-              </button>
-            </section>
-          </div>
+          <OutcomeSheet
+            loanId={l.id}
+            borrower={l.borrower}
+            onClose={() => setShowOutcome(false)}
+          />
         )}
       </main>
     </div>

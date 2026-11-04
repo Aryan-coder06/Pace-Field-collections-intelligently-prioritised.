@@ -22,4 +22,8 @@ export type LoanSummary = {
   band: string;
   reasons: string[];
   rank?: number;
+  promise_status?: string | null;
+  touched?: boolean;
+  last_activity?: string | null;
+  next_action?: string;
 };

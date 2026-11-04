@@ -3,7 +3,16 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Clock3 } from "lucide-react";
 import { request, type User } from "@/lib/api";
-type Event = { time: string; officer: string; borrower: string; event: string };
+type Event = {
+  time: string;
+  officer: string;
+  borrower: string;
+  event: string;
+  audit_id?: number;
+  location_status?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
 export default function ActivityPage() {
   const q = useQuery({
     queryKey: ["my-activity"],
@@ -48,8 +57,26 @@ export default function ActivityPage() {
               <span>
                 <b>{e.event}</b>
                 <small>
-                  {e.borrower} · {e.officer}
+                  {e.borrower} · {e.officer} · Audit #{e.audit_id ?? "—"}
                 </small>
+                {e.location_status && (
+                  <small>
+                    Location: {e.location_status}
+                    {e.latitude != null && e.longitude != null && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <a
+                          href={`https://maps.google.com/?q=${e.latitude},${e.longitude}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View map
+                        </a>
+                      </>
+                    )}
+                  </small>
+                )}
               </span>
               <time>
                 {new Date(e.time).toLocaleTimeString("en-IN", {
