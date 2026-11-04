@@ -25,6 +25,8 @@ from app.models import (
     Assignment,
     AuditEvent,
     Borrower,
+    Branch,
+    CollectionOutcome,
     Loan,
     Promise,
     RefreshSession,
@@ -141,6 +143,25 @@ def loan_view(db: Session, loan: Loan, snapshot: Snapshot | None = None):
     snap = snapshot or db.scalar(
         select(Snapshot).where(Snapshot.loan_id == loan.id).order_by(Snapshot.snapshot_date.desc())
     )
+    latest_promise = db.scalar(
+        select(Promise).where(Promise.loan_id == loan.id).order_by(Promise.created_at.desc())
+    )
+    touched = (
+        db.scalar(
+            select(CollectionOutcome.id)
+            .where(
+                CollectionOutcome.loan_id == loan.id,
+                CollectionOutcome.created_at >= business_day_start_utc(),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+    last_event = db.scalar(
+        select(AuditEvent)
+        .where(AuditEvent.entity_type == "Loan", AuditEvent.entity_id == str(loan.id))
+        .order_by(AuditEvent.occurred_at.desc())
+    )
     return {
         "id": loan.id,
         "loan_number": loan.loan_number,
@@ -156,6 +177,16 @@ def loan_view(db: Session, loan: Loan, snapshot: Snapshot | None = None):
         "score": snap.score,
         "band": snap.band,
         "reasons": snap.reasons.split("|"),
+        "promise_status": latest_promise.status if latest_promise else None,
+        "touched": touched,
+        "last_activity": last_event.action if last_event else None,
+        "next_action": "Follow up on broken promise"
+        if latest_promise and latest_promise.status == "BROKEN"
+        else "Review open promise"
+        if latest_promise and latest_promise.status == "OPEN"
+        else "Review recorded outcome"
+        if touched
+        else "Contact borrower",
     }
 
 
@@ -261,6 +292,9 @@ def me(user: User = Depends(current_user)):
 @app.get("/officer/today", response_model=TodayOut)
 def officer_today(user: User = Depends(current_user), db: Session = Depends(db_session)):
     require_role(user, Role.FIELD_OFFICER)
+    from app.stage2 import reconcile_promises
+
+    reconcile_promises(db, user.branch_id)
     today = business_date()
     rows = db.execute(
         select(Loan, Snapshot)
@@ -283,13 +317,16 @@ def officer_today(user: User = Depends(current_user), db: Session = Depends(db_s
         "date": today.isoformat(),
         "accounts": len(items),
         "outstanding_total": format(total, ".2f"),
-        "completed": 0,
+        "completed": sum(bool(x["touched"]) for x in items),
         "items": items,
     }
 
 
 @app.get("/loans/{loan_id}", response_model=LoanDetailOut)
 def get_loan(loan_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    from app.stage2 import reconcile_promises
+
+    reconcile_promises(db, user.branch_id)
     loan = db.get(Loan, loan_id)
     if not loan:
         raise HTTPException(404, "Loan not found.")
@@ -336,6 +373,9 @@ def get_loan(loan_id: int, user: User = Depends(current_user), db: Session = Dep
 @app.get("/officer/promises", response_model=list[PromiseOut])
 def promises(user: User = Depends(current_user), db: Session = Depends(db_session)):
     require_role(user, Role.FIELD_OFFICER)
+    from app.stage2 import reconcile_promises
+
+    reconcile_promises(db, user.branch_id)
     rows = db.execute(
         select(Promise, Loan)
         .join(Loan, Promise.loan_id == Loan.id)
@@ -355,6 +395,7 @@ def promises(user: User = Depends(current_user), db: Session = Depends(db_sessio
             "amount": format(promise.amount, ".2f"),
             "promise_date": promise.promise_date.isoformat(),
             "promise_status": promise.status,
+            "version": promise.version,
         }
         for promise, loan in rows
     ]
@@ -379,14 +420,7 @@ def officer_recent_activity(user: User = Depends(current_user), db: Session = De
         .limit(30)
     ).all()
     return [
-        {
-            "time": event.occurred_at.isoformat(),
-            "officer": user.name,
-            "borrower": db.get(
-                Borrower, db.get(Loan, int(event.entity_id)).borrower_id
-            ).display_name,
-            "event": event.action,
-        }
+        audit_view(db, event)
         for event in events
         if event.entity_type == "Loan"
         and event.entity_id.isdigit()
@@ -397,30 +431,23 @@ def officer_recent_activity(user: User = Depends(current_user), db: Session = De
 @app.get("/manager/overview", response_model=ManagerOverviewOut)
 def manager_overview(user: User = Depends(current_user), db: Session = Depends(db_session)):
     require_role(user, Role.BRANCH_MANAGER)
+    from app.stage2 import reconcile_promises, roll_rates
+
+    reconcile_promises(db, user.branch_id)
     loans = db.scalars(select(Loan).where(Loan.branch_id == user.branch_id)).all()
     rows = [loan_view(db, loan) for loan in loans]
     officers = db.scalars(
         select(User).where(User.branch_id == user.branch_id, User.role == Role.FIELD_OFFICER.value)
     ).all()
     total = sum((Decimal(x["outstanding"]) for x in rows), Decimal("0.00"))
-    historical = db.execute(
-        select(Snapshot.snapshot_date, Snapshot.dpd)
-        .join(Loan, Loan.id == Snapshot.loan_id)
-        .where(Loan.branch_id == user.branch_id, Snapshot.snapshot_date < business_date())
-    ).all()
-    by_month: dict[str, list[int]] = {}
-    for snapshot_date, dpd in historical:
-        by_month.setdefault(snapshot_date.strftime("%Y-%m"), []).append(dpd)
+    periods = roll_rates(user, db)["periods"]
     trend = [
-        {
-            "month": datetime.strptime(month, "%Y-%m").strftime("%b"),
-            "rate": round(100 * sum(dpd >= 30 for dpd in dpds) / len(dpds)),
-        }
-        for month, dpds in sorted(by_month.items())[-6:]
-        if dpds
+        {"month": period["follow_up"].strftime("%b"), "rate": round(period["rate"])}
+        for period in periods
+        if period["rate"] is not None
     ]
     return {
-        "branch": "Indore Branch",
+        "branch": db.get(Branch, user.branch_id).name,
         "accounts": len(rows),
         "overdue_total": format(total, ".2f"),
         "dpd_1_30": sum(1 for x in rows if 1 <= x["dpd"] <= 30),
@@ -452,6 +479,7 @@ def manager_officers(user: User = Depends(current_user), db: Session = Depends(d
             .where(
                 Assignment.officer_id == officer.id,
                 Assignment.status == "ACTIVE",
+                Assignment.assignment_date == business_date(),
                 Snapshot.snapshot_date == business_date(),
             )
         ).all()
@@ -480,14 +508,29 @@ def recent_activity(user: User = Depends(current_user), db: Session = Depends(db
         .limit(20)
     ).all()
     return [
-        {
-            "time": event.occurred_at.isoformat(),
-            "officer": db.get(User, event.actor_user_id).name,
-            "borrower": db.get(
-                Borrower, db.get(Loan, int(event.entity_id)).borrower_id
-            ).display_name,
-            "event": event.action,
-        }
+        audit_view(db, event)
         for event in events
-        if event.entity_type == "Loan"
+        if event.entity_type == "Loan" and event.entity_id.isdigit()
     ]
+
+
+def audit_view(db: Session, event: AuditEvent):
+    loan = db.get(Loan, int(event.entity_id))
+    outcome_id = event.metadata_json.get("outcome_id") if event.metadata_json else None
+    outcome = db.get(CollectionOutcome, outcome_id) if outcome_id else None
+    return {
+        "time": event.occurred_at.isoformat(),
+        "officer": db.get(User, event.actor_user_id).name,
+        "borrower": db.get(Borrower, loan.borrower_id).display_name,
+        "event": event.action,
+        "audit_id": event.id,
+        "location_status": outcome.location_status if outcome else None,
+        "latitude": outcome.latitude if outcome else None,
+        "longitude": outcome.longitude if outcome else None,
+    }
+
+
+# Stage 2 routes use the same authentication and database dependencies.
+from app.stage2 import router as collections_router
+
+app.include_router(collections_router)

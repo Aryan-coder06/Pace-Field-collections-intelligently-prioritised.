@@ -33,6 +33,10 @@ class LoanOut(BaseModel):
     score: int
     band: str
     reasons: list[str]
+    promise_status: str | None = None
+    touched: bool = False
+    last_activity: str | None = None
+    next_action: str = "Review account"
 
 
 class HistoryOut(BaseModel):
@@ -57,6 +61,7 @@ class PromiseOut(LoanOut):
     amount: str
     promise_date: date
     promise_status: str
+    version: int
 
 
 class TodayOut(BaseModel):
@@ -99,3 +104,7 @@ class ActivityOut(BaseModel):
     officer: str
     borrower: str
     event: str
+    audit_id: int | None = None
+    location_status: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None

@@ -8,10 +8,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -172,6 +174,36 @@ class Promise(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class PromiseTransition(Base):
+    __tablename__ = "promise_transitions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    promise_id: Mapped[int] = mapped_column(ForeignKey("promises.id"), index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    from_status: Mapped[str] = mapped_column(String(20))
+    to_status: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ImportBatch(Base):
+    __tablename__ = "import_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(180))
+    file_hash: Mapped[str] = mapped_column(String(64), index=True)
+    import_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), default="PREVIEW")
+    rows_json: Mapped[list[dict[str, object]]] = mapped_column(JSON)
+    summary_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class CollectionOutcome(Base):
     __tablename__ = "collection_outcomes"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -187,6 +219,9 @@ class CollectionOutcome(Base):
     longitude: Mapped[float | None] = mapped_column(nullable=True)
     device_event_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     sync_status: Mapped[str] = mapped_column(String(20), default="SYNCED")
+    reported_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    location_status: Mapped[str] = mapped_column(String(30), default="UNAVAILABLE")
+    review_status: Mapped[str] = mapped_column(String(30), default="NOT_APPLICABLE")
 
 
 class ContactAttempt(Base):
@@ -240,3 +275,21 @@ class AuditEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+Index(
+    "uq_confirmed_import_hash",
+    ImportBatch.branch_id,
+    ImportBatch.file_hash,
+    unique=True,
+    sqlite_where=text("status = 'CONFIRMED'"),
+    postgresql_where=text("status = 'CONFIRMED'"),
+)
+Index(
+    "uq_active_daily_assignment",
+    Assignment.loan_id,
+    Assignment.assignment_date,
+    unique=True,
+    sqlite_where=text("status = 'ACTIVE'"),
+    postgresql_where=text("status = 'ACTIVE'"),
+)

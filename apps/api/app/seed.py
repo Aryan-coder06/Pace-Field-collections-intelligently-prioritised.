@@ -11,11 +11,14 @@ from app.models import (
     AuditEvent,
     Borrower,
     Branch,
+    CollectionOutcome,
+    ContactAttempt,
     Loan,
     OfficerProfile,
     PincodeCoverage,
     PriorityScore,
     Promise,
+    PromiseTransition,
     Snapshot,
     User,
 )
@@ -26,9 +29,110 @@ def month_start(day: date, offset: int) -> date:
     return date(month_index // 12, month_index % 12 + 1, 1)
 
 
+def seed_stage2(db):
+    """Idempotently enrich existing synthetic portfolios for Stage 2 demos."""
+    branch = db.scalar(select(Branch).where(Branch.code == "IDR"))
+    if not branch:
+        return
+    loans = db.scalars(select(Loan).where(Loan.branch_id == branch.id).order_by(Loan.id)).all()
+    today = business_date()
+    officers = db.scalars(
+        select(User)
+        .where(
+            User.branch_id == branch.id,
+            User.role == "FIELD_OFFICER",
+        )
+        .order_by(User.id)
+    ).all()
+    coverage_plan = {
+        0: ["452001", "452003"],
+        1: ["452001", "452003", "452007"],
+        2: ["452007", "452010"],
+        3: ["452010", "452015"],
+        4: ["452015", "452001"],
+    }
+    for index, officer in enumerate(officers):
+        existing_pins = set(
+            db.scalars(
+                select(PincodeCoverage.pincode).where(PincodeCoverage.officer_id == officer.id)
+            ).all()
+        )
+        for pincode in coverage_plan.get(index, []):
+            if pincode not in existing_pins:
+                db.add(PincodeCoverage(officer_id=officer.id, pincode=pincode))
+    for i, loan in enumerate(loans[:36]):
+        for offset, late_count in enumerate([8, 8, 7, 7, 6, 6]):
+            snap = db.scalar(
+                select(Snapshot).where(
+                    Snapshot.loan_id == loan.id,
+                    Snapshot.snapshot_date == month_start(today, offset - 5),
+                )
+            )
+            if snap:
+                snap.dpd = 35 + i % 10 if offset > 0 and i < late_count else 10 + i % 18
+    for dispute in db.scalars(
+        select(CollectionOutcome).where(
+            CollectionOutcome.outcome_type == "DISPUTE",
+            CollectionOutcome.review_status == "NOT_APPLICABLE",
+        )
+    ).all():
+        dispute.review_status = "OPEN"
+    if len(loans) > 4:
+        officer_id = db.scalar(
+            select(Assignment.officer_id).where(Assignment.loan_id == loans[3].id)
+        )
+        kept = db.scalar(
+            select(Promise).where(Promise.loan_id == loans[3].id, Promise.status == "KEPT")
+        )
+        if not kept and officer_id:
+            kept = Promise(
+                loan_id=loans[3].id,
+                officer_id=officer_id,
+                amount=Decimal(18000),
+                promise_date=today - timedelta(days=3),
+                status="KEPT",
+            )
+            db.add(kept)
+            db.flush()
+            db.add(
+                PromiseTransition(
+                    promise_id=kept.id,
+                    actor_user_id=officer_id,
+                    from_status="OPEN",
+                    to_status="KEPT",
+                    reason="Synthetic demo verification",
+                )
+            )
+        if officer_id and not db.scalar(
+            select(CollectionOutcome.id).where(CollectionOutcome.loan_id == loans[3].id)
+        ):
+            db.add(
+                CollectionOutcome(
+                    loan_id=loans[3].id,
+                    officer_id=officer_id,
+                    outcome_type="DISPUTE",
+                    notes="Synthetic invoice amount dispute for demonstration",
+                    occurred_at=datetime.now(UTC) - timedelta(days=2),
+                    location_status="UNAVAILABLE",
+                    device_event_id="00000000-0000-0000-0000-000000000001",
+                )
+            )
+            db.add(
+                ContactAttempt(
+                    loan_id=loans[3].id,
+                    officer_id=officer_id,
+                    channel="CALL",
+                    attempted_at=datetime.now(UTC) - timedelta(days=2),
+                    allowed=True,
+                )
+            )
+    db.commit()
+
+
 def seed():
     with SessionLocal() as db:
         if db.scalar(select(Branch.id).limit(1)):
+            seed_stage2(db)
             print("Pace seed data already exists")
             return
         branch = Branch(code="IDR", name="Indore Branch", city="Indore")
@@ -327,6 +431,7 @@ def seed():
                         )
                     )
         db.commit()
+        seed_stage2(db)
         print("Seeded Indore portfolio: 36 loans, 5 officers and demo users")
 
 

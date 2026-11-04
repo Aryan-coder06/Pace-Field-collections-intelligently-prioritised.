@@ -1,0 +1,5 @@
+loan_id,borrower_name,outstanding_amount,dpd,pincode,overdue_amount,last_payment_date
+LN-14001,Fictional Tools,-100,12,452001,20,2026-10-30
+LN-14002,Example Packaging,250000,not-a-number,452003,25000,invalid-date
+LN-14003,Sample Steel,200000,15,wrong,20000,2026-10-29
+LN-14003,Sample Steel,200000,15,452001,20000,2026-10-29
