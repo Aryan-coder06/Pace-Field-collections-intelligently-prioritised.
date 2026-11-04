@@ -5,3 +5,18 @@
 - ASSUMPTION-003: Indore business dates use Asia/Kolkata; stored timestamps are timezone-aware UTC.
 - ASSUMPTION-004: Demo credentials exist only for local synthetic-data evaluation.
 - ASSUMPTION-005: Stage 1 seeded priority scores are deterministic representations, not model output.
+- ASSUMPTION-006: The canonical CSV headers are `loan_id`, `borrower_name`, `outstanding_amount`, `dpd`, and `pincode`; optional fields are documented in the sample file.
+- ASSUMPTION-007: An identical confirmed file is idempotent. A conflicting same-day snapshot is rejected and must be corrected in the source file before a fresh preview.
+- ASSUMPTION-008: Automatic assignment has no unsupported-pincode fallback. Such loans remain unassigned for manager review.
+- ASSUMPTION-009: Assignment cost is the sum of normalized account count, outstanding exposure, and accounts at 30+ DPD; user ID is the stable tie-breaker.
+- ASSUMPTION-010: Manager reassignment requires a reason and an active in-branch officer who covers the borrower pincode.
+- ASSUMPTION-011: One open promise per loan is allowed. A new promise outcome is rejected while another promise remains open.
+- ASSUMPTION-012: A reported PAID outcome is operational evidence only and never changes authoritative loan outstanding.
+- ASSUMPTION-013: OPEN promises are deterministically reconciled to BROKEN when read or changed after their due date in the branch timezone.
+- ASSUMPTION-014: KEPT requires an explicit mock verification action by an authorized officer or manager; the reason and transition are retained.
+- ASSUMPTION-015: In-app CALL and MESSAGE initiation is allowed from 08:00 inclusive to 19:00 exclusive in the branch timezone.
+- ASSUMPTION-016: Browser location denial, timeout, low accuracy, or unavailability does not discard an outcome; the location status is persisted for review.
+- ASSUMPTION-017: Roll rate uses consecutive monthly snapshots 28–32 days apart. The denominator is the initial 1–30 DPD cohort; missing follow-up loans are disclosed and remain in the denominator.
+- ASSUMPTION-018: Reminder delivery is a labelled simulation. No SMS or WhatsApp provider is contacted in Stage 2.
+- ASSUMPTION-019: Seeded historical snapshots and coordinates are synthetic demonstration records.
+- ASSUMPTION-020: Reported and promised amounts cannot exceed the latest authoritative outstanding balance.

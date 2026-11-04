@@ -1,9 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,6 +21,8 @@ from app.models import (
     Borrower,
     Branch,
     Loan,
+    OfficerProfile,
+    PincodeCoverage,
     Promise,
     Snapshot,
     User,
@@ -73,6 +76,12 @@ def client():
         )
         db.add_all([manager, other_manager, officer, other_officer])
         db.flush()
+        db.add(OfficerProfile(user_id=officer.id, home_pincode="452001", workload_capacity=12))
+        db.add(PincodeCoverage(officer_id=officer.id, pincode="452001"))
+        db.add(
+            OfficerProfile(user_id=other_officer.id, home_pincode="452001", workload_capacity=12)
+        )
+        db.add(PincodeCoverage(officer_id=other_officer.id, pincode="452001"))
         b = Borrower(
             borrower_code="B-T",
             legal_name="Synthetic Works",
@@ -250,3 +259,348 @@ def test_health_and_seed_queue(client):
     payload = client.get("/officer/today").json()
     assert payload["accounts"] == 1
     assert payload["items"][0]["loan_number"] == "LN-T"
+
+
+def test_csv_preview_confirm_assignment_and_idempotency(client):
+    assert login(client, "manager@example.com").status_code == 200
+    content = b"loan_id,borrower_name,outstanding_amount,dpd,pincode,overdue_amount\nLN-NEW,Synthetic Parts,150000,18,452001,25000\n"
+    preview = client.post(
+        "/manager/imports/preview", files={"file": ("daily.csv", content, "text/csv")}
+    )
+    assert preview.status_code == 200
+    batch = preview.json()
+    assert batch["summary"]["valid"] == 1
+    confirmed = client.post(f"/manager/imports/{batch['id']}/confirm")
+    assert confirmed.status_code == 200
+    assert confirmed.json()["summary"]["assigned"] == 1
+    assert client.post(f"/manager/imports/{batch['id']}/confirm").status_code == 200
+    assignment = next(
+        x for x in client.get("/manager/assignments").json() if x["loan_number"] == "LN-NEW"
+    )
+    email = (
+        "officer@example.com" if assignment["officer"] == "Officer" else "otherofficer@example.com"
+    )
+    assert login(client, email).status_code == 200
+    assert any(
+        item["loan_number"] == "LN-NEW" for item in client.get("/officer/today").json()["items"]
+    )
+
+
+def test_csv_invalid_duplicate_and_branch_boundary(client):
+    assert login(client, "manager@example.com").status_code == 200
+    content = b"loan_id,borrower_name,outstanding_amount,dpd,pincode,last_payment_date\nLN-X,Synthetic,100000,8,452001,invalid-date\nLN-X,Synthetic,100000,8,452001,2026-10-30\n"
+    batch = client.post(
+        "/manager/imports/preview", files={"file": ("bad.csv", content, "text/csv")}
+    ).json()
+    assert batch["summary"]["duplicates"] == 1
+    assert any("YYYY-MM-DD" in error for error in batch["rows"][0]["errors"])
+    assert client.post(f"/manager/imports/{batch['id']}/confirm").status_code == 422
+    assert login(client, "other@example.com").status_code == 200
+    assert client.post(f"/manager/imports/{batch['id']}/confirm").status_code == 404
+
+
+def test_outcome_idempotency_promise_and_reported_payment(client):
+    assert login(client, "officer@example.com").status_code == 200
+    loan_id = client.test_ids["loan"]
+    outstanding = client.get(f"/loans/{loan_id}").json()["outstanding"]
+    body = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "PAID",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "reported_amount": "1000.00",
+        "location_status": "DENIED",
+    }
+    first = client.post(f"/loans/{loan_id}/outcomes", json=body)
+    assert first.status_code == 201
+    assert client.post(f"/loans/{loan_id}/outcomes", json=body).json()["duplicate"] is True
+    assert client.get(f"/loans/{loan_id}").json()["outstanding"] == outstanding
+    existing = client.get("/officer/promises").json()[0]
+    assert (
+        client.post(
+            f"/promises/{existing['promise_id']}/mark-kept",
+            json={"expected_version": existing["version"], "reason": "Mock verified payment"},
+        ).status_code
+        == 200
+    )
+    from datetime import timedelta
+
+    body = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "PROMISE_TO_PAY",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "promised_amount": "3000.00",
+        "promise_date": (business_date() + timedelta(days=1)).isoformat(),
+    }
+    assert client.post(f"/loans/{loan_id}/outcomes", json=body).status_code == 201
+    assert any(p["amount"] == "3000.00" for p in client.get("/officer/promises").json())
+    assert (
+        client.post(f"/loans/{client.test_ids['other_loan']}/outcomes", json=body).status_code
+        == 403
+    )
+
+
+def test_contact_window_boundaries_and_blocked_audit(client, monkeypatch):
+    from zoneinfo import ZoneInfo
+
+    from app import stage2
+
+    india = ZoneInfo("Asia/Kolkata")
+    for hour, minute, expected in [(7, 59, False), (8, 0, True), (18, 59, True), (19, 0, False)]:
+        instant = datetime.combine(business_date(), time(hour, minute), tzinfo=india)
+        assert stage2.contact_allowed(instant.astimezone(UTC), "Asia/Kolkata") is expected
+    real_datetime = stage2.datetime
+
+    class ClosedClock(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.combine(business_date(), time(19), tzinfo=india).astimezone(UTC)
+
+    monkeypatch.setattr(stage2, "datetime", ClosedClock)
+    assert login(client, "officer@example.com").status_code == 200
+    blocked = client.post(
+        f"/loans/{client.test_ids['loan']}/contact-attempts", json={"channel": "CALL"}
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"]["code"] == "CONTACT_WINDOW_CLOSED"
+    assert (
+        client.post(
+            f"/loans/{client.test_ids['other_loan']}/contact-attempts", json={"channel": "CALL"}
+        ).status_code
+        == 403
+    )
+    db = next(client.app.dependency_overrides[db_session]())
+    from app.models import ContactAttempt
+
+    assert (
+        db.query(ContactAttempt)
+        .filter(
+            ContactAttempt.loan_id == client.test_ids["loan"], ContactAttempt.allowed.is_(False)
+        )
+        .count()
+        == 1
+    )
+    assert client.get(f"/loans/{client.test_ids['loan']}").status_code == 200
+    administrative = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "NOT_REACHABLE",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "location_status": "UNAVAILABLE",
+    }
+    assert (
+        client.post(f"/loans/{client.test_ids['loan']}/outcomes", json=administrative).status_code
+        == 201
+    )
+
+
+def test_assignment_override_requires_branch_and_version(client):
+    assert login(client, "manager@example.com").status_code == 200
+    loan_id = client.test_ids["loan"]
+    row = next(x for x in client.get("/manager/assignments").json() if x["id"] == loan_id)
+    body = {
+        "loan_id": loan_id,
+        "officer_id": 4,
+        "expected_version": row["version"],
+        "reason": "Route coverage adjustment",
+    }
+    assert client.post("/manager/assignments/reassign", json=body).status_code == 200
+    assert client.post("/manager/assignments/reassign", json=body).status_code == 409
+    assert login(client, "other@example.com").status_code == 200
+    assert client.post("/manager/assignments/reassign", json=body).status_code == 403
+
+
+def test_import_conflicting_same_day_snapshot_and_unassigned(client):
+    assert login(client, "manager@example.com").status_code == 200
+    conflict = b"loan_id,borrower_name,outstanding_amount,dpd,pincode\nLN-T,Synthetic Works,999999,12,452001\n"
+    preview = client.post(
+        "/manager/imports/preview", files={"file": ("conflict.csv", conflict, "text/csv")}
+    ).json()
+    assert preview["summary"]["invalid"] == 1
+    assert "Conflicting same-day" in preview["rows"][0]["errors"][0]
+    unassigned = b"loan_id,borrower_name,outstanding_amount,dpd,pincode\nLN-UNASSIGNED,Remote Synthetic Works,100000,10,459999\n"
+    batch = client.post(
+        "/manager/imports/preview", files={"file": ("remote.csv", unassigned, "text/csv")}
+    ).json()
+    result = client.post(f"/manager/imports/{batch['id']}/confirm")
+    assert result.status_code == 200
+    assert result.json()["summary"]["unassigned"] == 1
+    row = next(
+        x for x in client.get("/manager/assignments").json() if x["loan_number"] == "LN-UNASSIGNED"
+    )
+    assert row["officer_id"] is None
+
+
+def test_outcome_validation_and_promise_version(client):
+    assert login(client, "officer@example.com").status_code == 200
+    loan_id = client.test_ids["loan"]
+    body = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "DISPUTE",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "notes": "short",
+    }
+    assert client.post(f"/loans/{loan_id}/outcomes", json=body).status_code == 422
+    too_large = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "PAID",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "reported_amount": "90001",
+    }
+    assert client.post(f"/loans/{loan_id}/outcomes", json=too_large).status_code == 422
+    dispute = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "DISPUTE",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "notes": "Invoice value requires manager review",
+    }
+    assert client.post(f"/loans/{loan_id}/outcomes", json=dispute).status_code == 201
+    assert login(client, "manager@example.com").status_code == 200
+    assert client.get("/manager/analytics/overview").json()["open_disputes"] == 1
+    assert login(client, "officer@example.com").status_code == 200
+    body = {
+        "device_event_id": str(uuid4()),
+        "outcome_type": "PROMISE_TO_PAY",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "promised_amount": "-1",
+        "promise_date": business_date().isoformat(),
+    }
+    assert client.post(f"/loans/{loan_id}/outcomes", json=body).status_code == 422
+    promise = client.get("/officer/promises").json()[0]
+    action = {"expected_version": promise["version"], "reason": "Mock verified payment"}
+    assert (
+        client.post(f"/promises/{promise['promise_id']}/mark-kept", json=action).status_code == 200
+    )
+    assert (
+        client.post(f"/promises/{promise['promise_id']}/mark-kept", json=action).status_code == 409
+    )
+    assert client.get(f"/promises/{promise['promise_id']}/history").status_code == 200
+
+
+def test_roll_rate_identity_denominator_and_missing_coverage(client):
+    from datetime import date
+
+    from app.stage2 import cohort
+
+    generator = client.app.dependency_overrides[db_session]()
+    db = next(generator)
+    branch_id = 1
+    start, follow = date(2026, 1, 1), date(2026, 2, 1)
+    db.add_all(
+        [
+            Snapshot(
+                loan_id=client.test_ids["loan"],
+                snapshot_date=start,
+                outstanding=Decimal(90000),
+                overdue=Decimal(10000),
+                dpd=20,
+                score=60,
+                band="MEDIUM",
+                reasons="A|B|C",
+            ),
+            Snapshot(
+                loan_id=client.test_ids["loan"],
+                snapshot_date=follow,
+                outstanding=Decimal(85000),
+                overdue=Decimal(20000),
+                dpd=35,
+                score=70,
+                band="HIGH",
+                reasons="A|B|C",
+            ),
+        ]
+    )
+    borrower = Borrower(
+        borrower_code="B-MISSING",
+        legal_name="Missing Follow Up",
+        display_name="Missing Follow Up",
+        phone="+919000000005",
+        pincode="452001",
+    )
+    db.add(borrower)
+    db.flush()
+    loan = Loan(
+        loan_number="LN-MISSING",
+        borrower_id=borrower.id,
+        branch_id=branch_id,
+        principal_amount=Decimal(50000),
+        product_type="Working capital",
+    )
+    db.add(loan)
+    db.flush()
+    db.add(
+        Snapshot(
+            loan_id=loan.id,
+            snapshot_date=start,
+            outstanding=Decimal(40000),
+            overdue=Decimal(5000),
+            dpd=15,
+            score=55,
+            band="MEDIUM",
+            reasons="A|B|C",
+        )
+    )
+    db.commit()
+    result = cohort(db, branch_id, start, follow)
+    assert result["eligible"] == 2 and result["observed"] == 1
+    assert result["missing"] == 1 and result["rolled"] == 1
+    assert result["rate"] == 50.0 and result["coverage"] == 50.0
+    empty = cohort(db, branch_id, date(2030, 1, 1), date(2030, 2, 1))
+    assert empty["eligible"] == 0 and empty["rate"] is None
+    db.close()
+    generator.close()
+
+
+def test_assignment_balances_and_excludes_inactive_officer(client):
+    assert login(client, "manager@example.com").status_code == 200
+    content = b"loan_id,borrower_name,outstanding_amount,dpd,pincode\nLN-BAL-1,Balance One,100000,10,452001\nLN-BAL-2,Balance Two,100000,10,452001\n"
+    batch = client.post(
+        "/manager/imports/preview", files={"file": ("balance.csv", content, "text/csv")}
+    ).json()
+    assert client.post(f"/manager/imports/{batch['id']}/confirm").status_code == 200
+    assignments = {
+        row["loan_number"]: row["officer_id"] for row in client.get("/manager/assignments").json()
+    }
+    assert assignments["LN-BAL-1"] != assignments["LN-BAL-2"]
+
+    generator = client.app.dependency_overrides[db_session]()
+    db = next(generator)
+    inactive = db.get(OfficerProfile, 4)
+    inactive.active_status = "INACTIVE"
+    db.commit()
+    db.close()
+    generator.close()
+    content = b"loan_id,borrower_name,outstanding_amount,dpd,pincode\nLN-ACTIVE,Active Route,100000,10,452001\n"
+    batch = client.post(
+        "/manager/imports/preview", files={"file": ("active.csv", content, "text/csv")}
+    ).json()
+    assert client.post(f"/manager/imports/{batch['id']}/confirm").status_code == 200
+    row = next(
+        item
+        for item in client.get("/manager/assignments").json()
+        if item["loan_number"] == "LN-ACTIVE"
+    )
+    assert row["officer_id"] == 3
+
+
+def test_promise_reconciliation_uses_branch_date(client):
+    from datetime import timedelta
+
+    assert login(client, "officer@example.com").status_code == 200
+    generator = client.app.dependency_overrides[db_session]()
+    db = next(generator)
+    promise = db.scalar(select(Promise).where(Promise.loan_id == client.test_ids["loan"]))
+    promise.promise_date = business_date() - timedelta(days=1)
+    db.commit()
+    db.close()
+    generator.close()
+    promises = client.get("/officer/promises").json()
+    assert promises[0]["promise_status"] == "BROKEN"
+
+
+def test_manager_analytics_is_branch_scoped(client):
+    assert login(client, "manager@example.com").status_code == 200
+    assert client.get("/manager/analytics/overview").json()["assigned"] == 1
+    assert login(client, "other@example.com").status_code == 200
+    overview = client.get("/manager/analytics/overview")
+    assert overview.status_code == 200
+    assert overview.json()["assigned"] == 1
+    assert overview.json()["buckets"]["1_30"] == 1
