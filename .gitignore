@@ -9,3 +9,7 @@ __pycache__/
 *.db
 .pytest_cache/
 .ruff_cache/
+
+# Generated build metadata
+*.tsbuildinfo
+*.egg-info/
