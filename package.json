@@ -1,0 +1,18 @@
+{
+  "name": "pace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "pnpm --filter pace-web dev",
+    "build": "pnpm --filter pace-web build",
+    "lint": "pnpm --filter pace-web lint",
+    "typecheck": "pnpm --filter pace-web typecheck",
+    "test:api": "cd apps/api && .venv/bin/pytest",
+    "format": "prettier --write 'apps/web/src/**/*.{ts,tsx,css}' 'packages/types/**/*.ts' '*.json' '*.yaml' '*.md'",
+    "format:check": "prettier --check 'apps/web/src/**/*.{ts,tsx,css}' 'packages/types/**/*.ts' '*.json' '*.yaml' '*.md'"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}
