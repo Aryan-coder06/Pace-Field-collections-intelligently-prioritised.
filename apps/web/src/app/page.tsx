@@ -1,5 +1,7 @@
 "use client";
 import Link from "next/link";
+import * as Tabs from "@radix-ui/react-tabs";
+import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -14,6 +16,9 @@ import {
   Phone,
   ShieldCheck,
   WalletCards,
+  LogOut,
+  Sparkles,
+  UsersRound,
 } from "lucide-react";
 import { request, type Loan, type User } from "@/lib/api";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -334,11 +339,10 @@ function Manager({ user }: { user: User }) {
           </span>
           <span>
             <b>Indore Branch</b>
-            <small>Branch workspace</small>
+            <small>Collections workspace</small>
           </span>
           <ChevronRight size={15} />
         </div>
-        <span className="side-label">WORKSPACE</span>
         <nav>
           {nav.map(([label, Icon]) => (
             <a
@@ -377,26 +381,28 @@ function Manager({ user }: { user: User }) {
                 router.replace("/login");
               }}
             >
-              ↗
+              <LogOut size={16} />
             </button>
-          </div>
-          <div className="secure-note">
-            <ShieldCheck size={14} /> Branch data is access controlled
           </div>
         </div>
       </aside>
       <main className="manager-main">
         <header className="manager-header" id="overview">
           <div>
-            <p className="eyebrow">BRANCH OPERATIONS</p>
-            <h1>Good morning, {user.name.split(" ")[0]}</h1>
+            <p className="eyebrow">YOUR BRANCH, AT A GLANCE</p>
+            <h1>Collections overview</h1>
             <p className="muted">
-              {today} <span className="dot-sep">·</span> Indore Branch
+              {today} <span className="dot-sep">·</span> Good morning,{" "}
+              {user.name.split(" ")[0]}
             </p>
           </div>
-          <button className="btn secondary" onClick={() => overview.refetch()}>
+          <Button
+            variant="secondary"
+            className="btn secondary"
+            onClick={() => overview.refetch()}
+          >
             <Activity size={16} /> Refresh data
-          </button>
+          </Button>
         </header>
         {overview.isLoading ? (
           <div className="manager-skeleton">
@@ -450,7 +456,12 @@ function Manager({ user }: { user: User }) {
                     <h2>Roll-rate trend</h2>
                   </div>
                   <span className="trend-badge">
-                    ↓ 5 pts <small>since June</small>
+                    {overview.data!.trend.length > 1
+                      ? `${overview.data!.trend[0].rate - overview.data!.trend[overview.data!.trend.length - 1].rate >= 0 ? "↓" : "↑"} ${Math.abs(overview.data!.trend[0].rate - overview.data!.trend[overview.data!.trend.length - 1].rate)} pts`
+                      : "Current view"}{" "}
+                    <small>
+                      since {overview.data!.trend[0]?.month ?? "start"}
+                    </small>
                   </span>
                 </div>
                 <div className="chart">
@@ -482,78 +493,140 @@ function Manager({ user }: { user: User }) {
                     {overview.data!.broken_promises}
                   </span>
                 </div>
-                <div className="exception-row">
+                <a className="exception-row" href="#activity">
                   <span className="exception-mark">!</span>
                   <span>
                     <b>Broken promises</b>
                     <small>Follow up on missed commitments</small>
                   </span>
                   <ArrowUpRight size={16} />
-                </div>
+                </a>
                 <div className="exception-row">
                   <span className="exception-mark amber">◷</span>
                   <span>
                     <b>Accounts nearing 30 DPD</b>
                     <small>Review early intervention cases</small>
                   </span>
-                  <ArrowUpRight size={16} />
                 </div>
-                <div className="exception-row">
+                <a className="exception-row" href="#officers">
                   <span className="exception-mark muted-mark">↗</span>
                   <span>
                     <b>Assignment balance</b>
                     <small>Review workload across the team</small>
                   </span>
                   <ArrowUpRight size={16} />
-                </div>
+                </a>
               </section>
             </div>
-            <section className="surface panel workload" id="officers">
+            <section className="command-panel" id="officers">
               <div className="panel-head">
                 <div>
-                  <span className="eyebrow">FIELD TEAM</span>
-                  <h2>Officer workload</h2>
+                  <span className="eyebrow">FIELD COMMAND</span>
+                  <h2>Today’s field team</h2>
                 </div>
-                <span className="muted">
-                  {overview.data!.officers} officers
+                <span className="command-count">
+                  <UsersRound size={15} /> {overview.data!.officers} officers on
+                  route
                 </span>
               </div>
               {officers.isLoading ? (
-                <p className="muted">Loading officer allocations…</p>
+                <div className="manager-skeleton">
+                  <div />
+                  <div />
+                </div>
               ) : officers.isError ? (
                 <ErrorBox
                   message={officers.error.message}
                   retry={() => officers.refetch()}
                 />
+              ) : officers.data!.length === 0 ? (
+                <p className="command-empty">
+                  No officers are assigned to this branch yet.
+                </p>
               ) : (
-                <div className="officer-table">
-                  <div className="table-row table-label">
-                    <span>OFFICER</span>
-                    <span>ACCOUNTS</span>
-                    <span>OUTSTANDING</span>
-                    <span>HIGH PRIORITY</span>
-                    <span>STATUS</span>
-                  </div>
-                  {officers.data!.map((o) => (
-                    <div className="table-row" key={o.id}>
-                      <span className="officer-name">
-                        <span className="avatar mini">
+                <Tabs.Root
+                  className="command-tabs"
+                  defaultValue={String(officers.data![0].id)}
+                  orientation="vertical"
+                >
+                  <Tabs.List
+                    className="command-list"
+                    aria-label="Select an officer"
+                  >
+                    {officers.data!.map((o) => (
+                      <Tabs.Trigger
+                        className="command-officer"
+                        value={String(o.id)}
+                        key={o.id}
+                      >
+                        <span className="command-avatar">
                           {o.name
                             .split(" ")
                             .map((n) => n[0])
                             .join("")}
                         </span>
-                        {o.name}
-                      </span>
-                      <b>{o.assigned}</b>
-                      <b className="tabular">{compact(o.outstanding)}</b>
-                      <b>{o.high_priority}</b>
-                      <span className="status-live">
-                        <i /> Active
-                      </span>
-                    </div>
+                        <span className="command-person">
+                          <b>{o.name}</b>
+                          <small>{o.assigned} assigned accounts</small>
+                        </span>
+                        <span className="command-amount">
+                          {compact(o.outstanding)}
+                        </span>
+                        <ChevronRight size={16} />
+                      </Tabs.Trigger>
+                    ))}
+                  </Tabs.List>
+                  {officers.data!.map((o) => (
+                    <Tabs.Content
+                      className="command-detail"
+                      value={String(o.id)}
+                      key={o.id}
+                    >
+                      <div className="command-detail-top">
+                        <span>OFFICER SNAPSHOT</span>
+                        <span className="command-live">
+                          <i /> {o.active ? "On route" : "Inactive"}
+                        </span>
+                      </div>
+                      <div className="command-detail-person">
+                        <span className="command-avatar large">
+                          {o.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")}
+                        </span>
+                        <div>
+                          <h3>{o.name}</h3>
+                          <p>Indore field collections</p>
+                        </div>
+                      </div>
+                      <div className="command-stats">
+                        <div>
+                          <small>ASSIGNED</small>
+                          <strong>{o.assigned}</strong>
+                          <span>accounts today</span>
+                        </div>
+                        <div>
+                          <small>OUTSTANDING</small>
+                          <strong>{compact(o.outstanding)}</strong>
+                          <span>on assigned route</span>
+                        </div>
+                        <div>
+                          <small>HIGH PRIORITY</small>
+                          <strong>{o.high_priority}</strong>
+                          <span>need attention</span>
+                        </div>
+                      </div>
+                      <div className="command-foot">
+                        <Sparkles size={16} />
+                        <span>
+                          Priority is based on persisted demo scores. Review
+                          each account before taking action.
+                        </span>
+                      </div>
+                    </Tabs.Content>
                   ))}
-                </div>
+                </Tabs.Root>
               )}
             </section>
             <section className="surface panel activity-panel" id="activity">

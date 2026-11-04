@@ -1557,3 +1557,438 @@ input:focus-visible {
 .sync.offline i {
   background: #b77a42;
 }
+
+/* Branch workspace — compact navigation and a focused field command area. */
+.manager-shell {
+  display: block;
+  min-height: 100vh;
+  background: #f2f1f9;
+  padding: 22px;
+}
+.manager-shell .sidebar {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: 1500px;
+  height: 76px;
+  margin: 0 auto;
+  padding: 12px 22px;
+  flex-direction: row;
+  align-items: center;
+  gap: 24px;
+  border: 1px solid #e7e7f0;
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 12px 35px rgba(40, 39, 94, 0.06);
+  z-index: 2;
+}
+.manager-shell .sidebar > .brand {
+  margin: 0;
+  white-space: nowrap;
+}
+.manager-shell .branch-select {
+  margin: 0;
+  border: 0;
+  padding: 0 12px;
+  border-left: 1px solid #e6e6ee;
+  border-radius: 0;
+  min-width: 162px;
+}
+.manager-shell .branch-select > svg {
+  display: none;
+}
+.manager-shell .sidebar nav {
+  display: flex;
+  gap: 3px;
+  padding: 5px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #202338;
+}
+.manager-shell .nav-item {
+  color: #d1d2e1;
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  gap: 7px;
+}
+.manager-shell .nav-item:hover {
+  background: #353851;
+  color: white;
+}
+.manager-shell .nav-item.active {
+  background: #5a51e8;
+  color: white;
+}
+.manager-shell .side-bottom {
+  margin: 0;
+}
+.manager-shell .user-chip {
+  border: 0;
+  padding: 0;
+}
+.manager-shell .user-chip > span:nth-child(2) {
+  display: none;
+}
+.manager-shell .user-chip button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: #f5f5fa;
+}
+.manager-shell .secure-note {
+  display: none;
+}
+.manager-shell .manager-main {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 36px 42px 60px;
+  background: #fafafd;
+  border: 1px solid #e7e7f0;
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  box-shadow: 0 28px 55px rgba(40, 39, 94, 0.06);
+}
+.manager-shell .manager-header {
+  margin-bottom: 24px;
+}
+.manager-shell .manager-header h1 {
+  font-size: 32px;
+  letter-spacing: -0.045em;
+  margin: 4px 0;
+}
+.manager-shell .manager-kpis {
+  gap: 13px;
+  margin-bottom: 16px;
+}
+.manager-shell .kpi {
+  min-height: 158px;
+  padding: 22px;
+  border-color: #e9e9f1;
+  border-radius: 16px;
+  justify-content: space-between;
+}
+.manager-shell .kpi strong {
+  font-size: 30px;
+}
+.manager-shell .kpi.feature {
+  background: #292b53;
+  border-color: #292b53;
+}
+.manager-shell .kpi.feature strong {
+  font-size: 35px;
+}
+.manager-shell .manager-grid {
+  margin-bottom: 16px;
+}
+.manager-shell .panel {
+  border-color: #e9e9f1;
+  border-radius: 16px;
+  padding: 22px;
+}
+.manager-shell .trend-panel,
+.manager-shell .exception-panel {
+  min-height: 285px;
+}
+.command-panel {
+  margin: 0 0 16px;
+  padding: 26px;
+  border-radius: 20px;
+  color: #f8f8ff;
+  background: #222438;
+  box-shadow: 0 16px 28px rgba(30, 32, 60, 0.1);
+}
+.command-panel .eyebrow {
+  color: #a8a9c8;
+}
+.command-panel .panel-head {
+  margin-bottom: 20px;
+}
+.command-panel h2 {
+  font-size: 21px;
+  margin: 5px 0 0;
+}
+.command-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9cae1;
+  font-size: 12px;
+}
+.command-tabs {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(0, 1.45fr);
+  gap: 18px;
+}
+.command-list {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+.command-officer {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: #2c2e45;
+  color: #f4f3ff;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.18s,
+    transform 0.18s,
+    border-color 0.18s;
+}
+.command-officer:hover {
+  background: #3a3a60;
+  transform: translateX(2px);
+}
+.command-officer[data-state="active"] {
+  background: #6259d9;
+  border-color: #a19afa;
+}
+.command-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: #8680ef;
+  color: white;
+  font-size: 12px;
+  font-weight: 750;
+}
+.command-person {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.command-person b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.command-person small {
+  color: #b7b8d1;
+  font-size: 11px;
+}
+.command-officer[data-state="active"] .command-person small {
+  color: #e0dcff;
+}
+.command-amount {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.command-officer > svg {
+  color: #a6a7be;
+}
+.command-detail {
+  min-width: 0;
+  min-height: 345px;
+  padding: 26px;
+  border-radius: 17px;
+  background: linear-gradient(145deg, #7771d9, #514bb5);
+  outline: none;
+}
+.command-detail-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #e7e6ff;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+}
+.command-live {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid #a8a3e7;
+  border-radius: 20px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.command-live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9af2c1;
+}
+.command-detail-person {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 27px 0 30px;
+}
+.command-avatar.large {
+  width: 48px;
+  height: 48px;
+  background: #e2e0ff;
+  color: #514bb5;
+  font-size: 14px;
+}
+.command-detail-person h3 {
+  font-size: 21px;
+  margin: 0 0 4px;
+}
+.command-detail-person p {
+  margin: 0;
+  color: #e2e0ff;
+  font-size: 12px;
+}
+.command-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.command-stats > div {
+  display: grid;
+  gap: 10px;
+  padding: 17px;
+  border: 1px solid #a7a2e8;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.command-stats small {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #e2e0ff;
+}
+.command-stats strong {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.command-stats span {
+  color: #e2e0ff;
+  font-size: 10px;
+}
+.command-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #aaa5e8;
+  color: #eeedff;
+  font-size: 11px;
+}
+.command-foot svg {
+  flex: none;
+}
+.command-empty {
+  color: #c9cae1;
+}
+@media (max-width: 1100px) {
+  .manager-shell .sidebar {
+    gap: 10px;
+    padding-inline: 14px;
+  }
+  .manager-shell .branch-select {
+    display: none;
+  }
+  .manager-shell .manager-main {
+    padding: 28px 24px 50px;
+  }
+}
+@media (max-width: 760px) {
+  .manager-shell {
+    padding: 0;
+  }
+  .manager-shell .sidebar {
+    height: auto;
+    min-height: 64px;
+    border-radius: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .manager-shell .sidebar nav {
+    display: flex;
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .manager-shell .nav-item {
+    flex: 1;
+    justify-content: center;
+  }
+  .manager-shell .side-bottom {
+    margin-left: auto;
+  }
+  .manager-shell .manager-main {
+    border-radius: 0;
+    padding: 25px 15px 40px;
+  }
+  .manager-shell .manager-header h1 {
+    font-size: 25px;
+  }
+  .manager-shell .manager-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .manager-shell .kpi {
+    min-height: 135px;
+    padding: 15px;
+  }
+  .manager-shell .kpi strong,
+  .manager-shell .kpi.feature strong {
+    font-size: 25px;
+  }
+  .command-panel {
+    padding: 18px;
+  }
+  .command-tabs {
+    grid-template-columns: 1fr;
+  }
+  .command-list {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 5px;
+  }
+  .command-officer {
+    min-width: 210px;
+  }
+  .command-detail {
+    padding: 20px;
+  }
+  .command-stats {
+    gap: 6px;
+  }
+  .command-stats > div {
+    padding: 10px;
+  }
+  .command-stats strong {
+    font-size: 18px;
+  }
+}
+.manager-shell a.exception-row {
+  color: inherit;
+  text-decoration: none;
+}
+.manager-shell a.exception-row:hover {
+  color: #514cbd;
+}
+@media (max-width: 900px) and (min-width: 761px) {
+  .command-tabs {
+    grid-template-columns: 1fr;
+  }
+  .command-list {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 5px;
+  }
+  .command-officer {
+    min-width: 205px;
+  }
+}
