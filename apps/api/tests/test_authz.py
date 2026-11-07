@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -604,3 +604,126 @@ def test_manager_analytics_is_branch_scoped(client):
     assert overview.status_code == 200
     assert overview.json()["assigned"] == 1
     assert overview.json()["buckets"]["1_30"] == 1
+
+
+def test_offline_sync_acknowledges_idempotently_and_detects_conflicts(client):
+    assert login(client, "officer@example.com").status_code == 200
+    event_id = str(uuid4())
+    envelope = {
+        "client_event_id": event_id,
+        "event_type": "COLLECTION_OUTCOME",
+        "entity_id": str(client.test_ids["loan"]),
+        "client_occurred_at": datetime.now(UTC).isoformat(),
+        "base_version": 1,
+        "payload": {
+            "outcome_type": "NOT_REACHABLE",
+            "notes": "",
+            "reported_amount": None,
+            "promised_amount": None,
+            "promise_date": None,
+            "location_status": "UNAVAILABLE",
+        },
+    }
+    first = client.post("/sync/events", json={"events": [envelope]})
+    assert first.status_code == 200
+    assert first.json()["results"][0]["status"] == "ACKNOWLEDGED"
+    repeated = client.post("/sync/events", json={"events": [envelope]}).json()["results"][0]
+    assert repeated["status"] == "ACKNOWLEDGED" and repeated["duplicate"] is True
+
+    conflict = {**envelope, "client_event_id": str(uuid4()), "base_version": 99}
+    conflict_result = client.post("/sync/events", json={"events": [conflict]}).json()["results"][0]
+    assert conflict_result["status"] == "CONFLICT"
+    assert conflict_result["error"]["code"] == "ASSIGNMENT_VERSION_CHANGED"
+
+    unauthorized = {
+        **envelope,
+        "client_event_id": str(uuid4()),
+        "entity_id": str(client.test_ids["other_loan"]),
+    }
+    rejected = client.post("/sync/events", json={"events": [unauthorized]}).json()["results"][0]
+    assert rejected["status"] == "REJECTED"
+    assert rejected["error"]["code"] == "ACCOUNT_ACCESS_REVOKED"
+
+
+def test_explainable_model_training_and_priority_override(client):
+    generator = client.app.dependency_overrides[db_session]()
+    db = next(generator)
+    branch_id = 1
+    start = date(2025, 1, 1)
+    for index in range(14):
+        borrower = Borrower(
+            borrower_code=f"B-ML-{index}",
+            legal_name=f"Model Synthetic {index}",
+            display_name=f"Model Synthetic {index}",
+            phone=f"+91910000{index:04d}",
+            pincode="452001",
+        )
+        db.add(borrower)
+        db.flush()
+        loan = Loan(
+            loan_number=f"LN-ML-{index}",
+            borrower_id=borrower.id,
+            branch_id=branch_id,
+            principal_amount=Decimal(200000 + index * 10000),
+            product_type="Working capital",
+        )
+        db.add(loan)
+        db.flush()
+        initial_dpd = 8 + index
+        db.add_all(
+            [
+                Snapshot(
+                    loan_id=loan.id,
+                    snapshot_date=start,
+                    outstanding=Decimal(150000 + index * 10000),
+                    overdue=Decimal(10000 + index * 2000),
+                    dpd=initial_dpd,
+                    score=50,
+                    band="MEDIUM",
+                    reasons="A|B|C",
+                ),
+                Snapshot(
+                    loan_id=loan.id,
+                    snapshot_date=start + timedelta(days=30),
+                    outstanding=Decimal(145000 + index * 10000),
+                    overdue=Decimal(12000 + index * 2000),
+                    dpd=35 + index if index % 2 == 0 else initial_dpd + 2,
+                    score=50,
+                    band="MEDIUM",
+                    reasons="A|B|C",
+                ),
+            ]
+        )
+    db.commit()
+    db.close()
+    generator.close()
+
+    assert login(client, "manager@example.com").status_code == 200
+    trained = client.post("/manager/ai/train")
+    assert trained.status_code == 200
+    assert trained.json()["sample_count"] >= 14
+    assert trained.json()["metrics"]["auc"] is not None
+    overview = client.get("/manager/ai/overview")
+    assert overview.status_code == 200
+    assert overview.json()["model"]["version"].startswith("pace-logit-")
+    assert len(overview.json()["queue"][0]["reasons"]) == 3
+
+    loan_id = client.test_ids["loan"]
+    applied = client.post(
+        f"/manager/ai/loans/{loan_id}/override",
+        json={"rank": 1, "reason": "Confirmed strategic account escalation"},
+    )
+    assert applied.status_code == 200
+    stale = client.post(
+        f"/manager/ai/loans/{loan_id}/override",
+        json={"rank": 2, "reason": "Attempted stale operational update"},
+    )
+    assert stale.status_code == 409
+    assert login(client, "other@example.com").status_code == 200
+    assert (
+        client.post(
+            f"/manager/ai/loans/{loan_id}/override",
+            json={"rank": 2, "reason": "Cross branch override attempt"},
+        ).status_code
+        == 404
+    )

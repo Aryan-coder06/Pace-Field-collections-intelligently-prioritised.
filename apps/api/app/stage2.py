@@ -658,6 +658,17 @@ def create_outcome(
     user: User = Depends(current_user),
     db: Session = Depends(db_session),
 ):
+    return record_outcome(db, user, loan_id, body)
+
+
+def record_outcome(
+    db: Session,
+    user: User,
+    loan_id: int,
+    body: OutcomeBody,
+    *,
+    commit: bool = True,
+):
     require_role(user, Role.FIELD_OFFICER)
     allowed_loan(db, user, loan_id)
     event_id = str(body.device_event_id)
@@ -744,16 +755,17 @@ def create_outcome(
             "promise_id": promise_id,
         },
     )
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        existing = db.scalar(
-            select(CollectionOutcome).where(CollectionOutcome.device_event_id == event_id)
-        )
-        if existing and existing.officer_id == user.id and existing.loan_id == loan_id:
-            return {"id": existing.id, "status": "RECORDED", "duplicate": True}
-        raise HTTPException(409, "Outcome conflicts with an existing event.") from None
+    if commit:
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = db.scalar(
+                select(CollectionOutcome).where(CollectionOutcome.device_event_id == event_id)
+            )
+            if existing and existing.officer_id == user.id and existing.loan_id == loan_id:
+                return {"id": existing.id, "status": "RECORDED", "duplicate": True}
+            raise HTTPException(409, "Outcome conflicts with an existing event.") from None
     return {"id": event.id, "status": "RECORDED", "duplicate": False, "promise_id": promise_id}
 
 
@@ -884,7 +896,14 @@ def reminder(
         if language == "en"
         else f"नमस्ते {borrower.display_name}, ₹{value} का आपका वादा किया भुगतान {due} को देय है। सहायता के लिए शाखा से संपर्क करें। — Pace डेमो"
     )
-    return {"simulation": True, "language": language, "message": message}
+    return {
+        "simulation": True,
+        "language": language,
+        "message": message,
+        "drafting_engine": "approved-template-v1",
+        "human_review_required": True,
+        "variables": ["borrower_display_name", "promised_amount", "promise_due_date"],
+    }
 
 
 def cohort(db: Session, branch_id: int, start: date, follow: date):

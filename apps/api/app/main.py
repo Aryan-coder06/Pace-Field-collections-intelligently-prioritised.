@@ -28,6 +28,8 @@ from app.models import (
     Branch,
     CollectionOutcome,
     Loan,
+    PriorityOverride,
+    PriorityScore,
     Promise,
     RefreshSession,
     Role,
@@ -73,7 +75,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
     return response
 
 
@@ -162,6 +164,25 @@ def loan_view(db: Session, loan: Loan, snapshot: Snapshot | None = None):
         .where(AuditEvent.entity_type == "Loan", AuditEvent.entity_id == str(loan.id))
         .order_by(AuditEvent.occurred_at.desc())
     )
+    assignment = db.scalar(
+        select(Assignment)
+        .where(
+            Assignment.loan_id == loan.id,
+            Assignment.status == "ACTIVE",
+            Assignment.assignment_date == business_date(),
+        )
+        .order_by(Assignment.assigned_at.desc())
+    )
+    priority = db.scalar(
+        select(PriorityScore)
+        .where(PriorityScore.loan_id == loan.id)
+        .order_by(PriorityScore.calculated_at.desc(), PriorityScore.id.desc())
+    )
+    override = db.scalar(
+        select(PriorityOverride)
+        .where(PriorityOverride.loan_id == loan.id, PriorityOverride.active.is_(True))
+        .order_by(PriorityOverride.updated_at.desc())
+    )
     return {
         "id": loan.id,
         "loan_number": loan.loan_number,
@@ -187,6 +208,13 @@ def loan_view(db: Session, loan: Loan, snapshot: Snapshot | None = None):
         else "Review recorded outcome"
         if touched
         else "Contact borrower",
+        "assignment_version": assignment.version if assignment else 1,
+        "priority_source": "TRAINED_MODEL"
+        if priority and priority.model_version.startswith("pace-logit-")
+        else "SEEDED",
+        "priority_model_version": priority.model_version if priority else None,
+        "override_rank": override.rank if override else None,
+        "override_reason": override.reason if override else None,
     }
 
 
@@ -308,7 +336,14 @@ def officer_today(user: User = Depends(current_user), db: Session = Depends(db_s
         )
     ).all()
     items = [loan_view(db, loan, snap) for loan, snap in rows]
-    items.sort(key=lambda x: (-x["score"], -x["dpd"]))
+    items.sort(
+        key=lambda x: (
+            x["override_rank"] is None,
+            x["override_rank"] or 9999,
+            -x["score"],
+            -x["dpd"],
+        )
+    )
     for rank, item in enumerate(items, 1):
         item["rank"] = rank
     total = sum((Decimal(x["outstanding"]) for x in items), Decimal("0.00"))
@@ -532,5 +567,7 @@ def audit_view(db: Session, event: AuditEvent):
 
 # Stage 2 routes use the same authentication and database dependencies.
 from app.stage2 import router as collections_router
+from app.stage3 import router as intelligence_router
 
 app.include_router(collections_router)
+app.include_router(intelligence_router)

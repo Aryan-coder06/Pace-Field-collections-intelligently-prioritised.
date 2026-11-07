@@ -16,6 +16,7 @@ from app.models import (
     Loan,
     OfficerProfile,
     PincodeCoverage,
+    PriorityModelRun,
     PriorityScore,
     Promise,
     PromiseTransition,
@@ -60,6 +61,54 @@ def seed_stage2(db):
         for pincode in coverage_plan.get(index, []):
             if pincode not in existing_pins:
                 db.add(PincodeCoverage(officer_id=officer.id, pincode=pincode))
+    for loan in loans:
+        latest_snapshot = db.scalar(
+            select(Snapshot)
+            .where(Snapshot.loan_id == loan.id)
+            .order_by(Snapshot.snapshot_date.desc())
+        )
+        today_snapshot = db.scalar(
+            select(Snapshot.id).where(
+                Snapshot.loan_id == loan.id,
+                Snapshot.snapshot_date == today,
+            )
+        )
+        if latest_snapshot and not today_snapshot:
+            db.add(
+                Snapshot(
+                    loan_id=loan.id,
+                    snapshot_date=today,
+                    outstanding=latest_snapshot.outstanding,
+                    overdue=latest_snapshot.overdue,
+                    dpd=latest_snapshot.dpd,
+                    score=latest_snapshot.score,
+                    band=latest_snapshot.band,
+                    reasons=latest_snapshot.reasons,
+                )
+            )
+        current_assignment = db.scalar(
+            select(Assignment.id).where(
+                Assignment.loan_id == loan.id,
+                Assignment.assignment_date == today,
+                Assignment.status == "ACTIVE",
+            )
+        )
+        latest_assignment = db.scalar(
+            select(Assignment)
+            .where(Assignment.loan_id == loan.id, Assignment.status == "ACTIVE")
+            .order_by(Assignment.assignment_date.desc(), Assignment.assigned_at.desc())
+        )
+        if latest_assignment and not current_assignment:
+            db.add(
+                Assignment(
+                    loan_id=loan.id,
+                    officer_id=latest_assignment.officer_id,
+                    branch_id=loan.branch_id,
+                    assignment_date=today,
+                    assignment_source="CARRY_FORWARD",
+                    version=latest_assignment.version,
+                )
+            )
     for i, loan in enumerate(loans[:36]):
         for offset, late_count in enumerate([8, 8, 7, 7, 6, 6]):
             snap = db.scalar(
@@ -127,6 +176,22 @@ def seed_stage2(db):
                 )
             )
     db.commit()
+    if not db.scalar(
+        select(PriorityModelRun.id).where(PriorityModelRun.branch_id == branch.id).limit(1)
+    ):
+        manager = db.scalar(
+            select(User).where(
+                User.branch_id == branch.id,
+                User.role == "BRANCH_MANAGER",
+            )
+        )
+        if manager:
+            from app.stage3 import train_priorities
+
+            result = train_priorities(manager, db)
+            print(
+                f"Trained {result['model_version']} on {result['sample_count']} historical observations"
+            )
 
 
 def seed():

@@ -253,6 +253,63 @@ class PriorityScore(Base):
     )
 
 
+class PriorityModelRun(Base):
+    __tablename__ = "priority_model_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    model_version: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="TRAINED")
+    training_start: Mapped[date] = mapped_column(Date)
+    training_end: Mapped[date] = mapped_column(Date)
+    sample_count: Mapped[int] = mapped_column(Integer)
+    positive_count: Mapped[int] = mapped_column(Integer)
+    metrics_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    parameters_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class PriorityOverride(Base):
+    __tablename__ = "priority_overrides"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    rank: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class SyncEventReceipt(Base):
+    __tablename__ = "sync_event_receipts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_event_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(50))
+    entity_id: Mapped[str] = mapped_column(String(80))
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    client_occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    server_received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20))
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    result_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
 class Activity(Base):
     __tablename__ = "activities"
     id: Mapped[int] = mapped_column(primary_key=True)

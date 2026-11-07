@@ -37,6 +37,11 @@ class LoanOut(BaseModel):
     touched: bool = False
     last_activity: str | None = None
     next_action: str = "Review account"
+    assignment_version: int = 1
+    priority_source: str = "SEEDED"
+    priority_model_version: str | None = None
+    override_rank: int | None = None
+    override_reason: str | None = None
 
 
 class HistoryOut(BaseModel):
