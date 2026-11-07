@@ -110,7 +110,7 @@ def seed_stage2(db):
                 )
             )
     for i, loan in enumerate(loans[:36]):
-        for offset, late_count in enumerate([8, 8, 7, 7, 6, 6]):
+        for offset, late_count in enumerate([8, 8, 7, 7, 6, 12]):
             snap = db.scalar(
                 select(Snapshot).where(
                     Snapshot.loan_id == loan.id,
@@ -176,8 +176,15 @@ def seed_stage2(db):
                 )
             )
     db.commit()
-    if not db.scalar(
-        select(PriorityModelRun.id).where(PriorityModelRun.branch_id == branch.id).limit(1)
+    latest_model = db.scalar(
+        select(PriorityModelRun)
+        .where(PriorityModelRun.branch_id == branch.id)
+        .order_by(PriorityModelRun.created_at.desc())
+    )
+    if (
+        not latest_model
+        or not latest_model.model_version.startswith("pace-logit-v2-")
+        or latest_model.metrics_json.get("auc") is None
     ):
         manager = db.scalar(
             select(User).where(
@@ -370,7 +377,7 @@ def seed():
                     reasons=reasons,
                 )
             )
-            for month_offset, late_accounts in enumerate([8, 8, 7, 7, 6, 6]):
+            for month_offset, late_accounts in enumerate([8, 8, 7, 7, 6, 12]):
                 month_date = month_start(today, month_offset - 5)
                 historic_dpd = 30 if i < late_accounts else max(1, dpd - (5 - month_offset) * 2)
                 historic_outstanding = Decimal(outstanding) * (

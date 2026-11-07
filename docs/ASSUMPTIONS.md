@@ -26,7 +26,7 @@
 - ASSUMPTION-024: Outcome synchronization requires the cached assignment version to equal the current active assignment version. A mismatch is retained as a conflict and never force-applied.
 - ASSUMPTION-025: Server-rejected and conflicting device events are terminal records until an officer explicitly discards them; network failures remain retryable.
 - ASSUMPTION-026: Foreground reconnection is the reliable synchronization mechanism. Browser Background Sync is not claimed across all Android browsers.
-- ASSUMPTION-027: Priority risk is a regularized logistic model trained on stored 28–32 day snapshot transitions from 1–30 DPD into 31–60 DPD.
+- ASSUMPTION-027: Priority risk is a class-balanced, regularized logistic model trained on stored 28–32 day snapshot transitions from 1–30 DPD into 31–60 DPD.
 - ASSUMPTION-028: Model validation uses the latest 20% temporal holdout, with at least four observations, and reports AUC, accuracy, precision, recall and Brier score without fabricating unavailable metrics.
 - ASSUMPTION-029: Priority reasons are the three largest positive standardized feature contributions, translated into controlled business-language explanations rather than SHAP values.
 - ASSUMPTION-030: A manager rank override changes operational ordering but does not overwrite the model score; the rationale and version are retained for audit and back-testing.

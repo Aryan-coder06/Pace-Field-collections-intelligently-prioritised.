@@ -280,11 +280,22 @@ def train_logistic(rows: list[tuple[list[float], int, date]]):
     ]
     weights = [0.0] * len(FEATURE_NAMES)
     positive_rate = min(0.999, max(0.001, sum(training_labels) / len(training_labels)))
+    positive_count = max(1, sum(training_labels))
+    negative_count = max(1, len(training_labels) - positive_count)
+    class_weights = [
+        len(training_labels) / (2 * (positive_count if label else negative_count))
+        for label in training_labels
+    ]
     intercept = math.log(positive_rate / (1 - positive_rate))
     learning_rate = 0.08
     for _ in range(900):
         predictions = [sigmoid(intercept + sum(w * x for w, x in zip(weights, row, strict=True))) for row in normalized]
-        errors = [prediction - label for prediction, label in zip(predictions, training_labels, strict=True)]
+        errors = [
+            (prediction - label) * weight
+            for prediction, label, weight in zip(
+                predictions, training_labels, class_weights, strict=True
+            )
+        ]
         intercept -= learning_rate * sum(errors) / len(errors)
         for i in range(len(weights)):
             gradient = sum(error * row[i] for error, row in zip(errors, normalized, strict=True)) / len(errors)
@@ -380,7 +391,7 @@ def train_priorities(user: User = Depends(current_user), db: Session = Depends(d
     if len(rows) < 12 or len(set(labels)) < 2:
         raise HTTPException(422, "At least 12 historical observations with both outcomes are required.")
     parameters, metrics = train_logistic(rows)
-    version = f"pace-logit-{user.branch_id}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
+    version = f"pace-logit-v2-{user.branch_id}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
     run = PriorityModelRun(
         branch_id=user.branch_id,
         model_version=version,
