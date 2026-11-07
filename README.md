@@ -2,7 +2,7 @@
 
 Field collections, intelligently prioritised.
 
-Pace is an offline-first field collections platform for an RBI-registered NBFC. Stage 2 provides a working daily collections lifecycle: validated overdue imports, deterministic assignment, field outcomes, promise tracking, compliant contact initiation, activity evidence and cohort analytics.
+Pace is an offline-first field collections platform for an RBI-registered NBFC. Stage 3 adds durable field event synchronization and a trained, explainable priority model to the complete Stage 2 collections lifecycle.
 
 ## Architecture
 
@@ -45,6 +45,18 @@ Pace enforces in-app borrower CALL and MESSAGE initiation from 08:00 inclusive t
 
 PAID is a reported field outcome. It does not verify bank settlement or reduce an authoritative outstanding balance.
 
-## Deferred to Stage 3
+## Stage 3 workflows
 
-IndexedDB outbox synchronization, conflict resolution across devices, trained ML scoring, SHAP explanations, AI reminder drafting, ranking overrides, real messaging/payment integrations and weekly model back-testing remain deferred.
+- The officer queue and promise summaries are cached by authenticated user and branch with explicit freshness metadata.
+- Every outcome is written to a Dexie outbox before transmission. API-health-aware foreground replay records per-event acknowledged, conflict or rejected states.
+- `POST /sync/events` enforces object authorization, assignment versions and UUID idempotency without trusting client actor or branch fields.
+- Managers can train a regularized logistic roll-forward model from stored snapshots, inspect temporal holdout metrics and weekly back-tests, and review three feature-grounded reasons per score.
+- Versioned manager rank overrides require a rationale and preserve the original model result for audit.
+- Approved bilingual reminder templates disclose simulation and mandatory human review.
+- The service worker caches only the application shell and static assets; authenticated API data remains under the explicit Dexie policy.
+
+See `docs/OFFLINE.md` and `docs/STAGE3_ARCHITECTURE.md` for protocol, privacy and model details.
+
+## Deferred to Stage 4 / production integration
+
+Real payment verification, SMS/WhatsApp delivery, managed-device encryption policy, remote wipe, automated job scheduling, production model monitoring alerts and universal background sync remain external integrations. Pace does not represent IndexedDB as encrypted storage or reported PAID outcomes as bank settlement.

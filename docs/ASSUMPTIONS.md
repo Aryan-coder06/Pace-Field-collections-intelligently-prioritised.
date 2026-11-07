@@ -20,3 +20,14 @@
 - ASSUMPTION-018: Reminder delivery is a labelled simulation. No SMS or WhatsApp provider is contacted in Stage 2.
 - ASSUMPTION-019: Seeded historical snapshots and coordinates are synthetic demonstration records.
 - ASSUMPTION-020: Reported and promised amounts cannot exceed the latest authoritative outstanding balance.
+- ASSUMPTION-021: Protected offline queues are unlocked only after the current browser session has been verified online; a fresh offline restart requires reauthentication.
+- ASSUMPTION-022: IndexedDB stores only scoped loan and promise summaries plus unsynchronized event payloads. It is not encryption at rest, so shared-device residual storage risk remains.
+- ASSUMPTION-023: Logout clears cached portfolio and promise projections but retains isolated unsynchronized outbox events so field work is not silently destroyed.
+- ASSUMPTION-024: Outcome synchronization requires the cached assignment version to equal the current active assignment version. A mismatch is retained as a conflict and never force-applied.
+- ASSUMPTION-025: Server-rejected and conflicting device events are terminal records until an officer explicitly discards them; network failures remain retryable.
+- ASSUMPTION-026: Foreground reconnection is the reliable synchronization mechanism. Browser Background Sync is not claimed across all Android browsers.
+- ASSUMPTION-027: Priority risk is a regularized logistic model trained on stored 28–32 day snapshot transitions from 1–30 DPD into 31–60 DPD.
+- ASSUMPTION-028: Model validation uses the latest 20% temporal holdout, with at least four observations, and reports AUC, accuracy, precision, recall and Brier score without fabricating unavailable metrics.
+- ASSUMPTION-029: Priority reasons are the three largest positive standardized feature contributions, translated into controlled business-language explanations rather than SHAP values.
+- ASSUMPTION-030: A manager rank override changes operational ordering but does not overwrite the model score; the rationale and version are retained for audit and back-testing.
+- ASSUMPTION-031: Reminder drafting uses approved bilingual templates with controlled variable substitution and mandatory human review. It is not presented as unconstrained generative AI.
