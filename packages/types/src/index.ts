@@ -26,4 +26,9 @@ export type LoanSummary = {
   touched?: boolean;
   last_activity?: string | null;
   next_action?: string;
+  assignment_version: number;
+  priority_source: "SEEDED" | "TRAINED_MODEL";
+  priority_model_version?: string | null;
+  override_rank?: number | null;
+  override_reason?: string | null;
 };

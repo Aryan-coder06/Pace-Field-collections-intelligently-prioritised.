@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { request, type User } from "@/lib/api";
+import { clearProtectedCache } from "@/lib/offline";
 export default function Profile() {
   const q = useQuery({
     queryKey: ["me"],
@@ -36,6 +37,7 @@ export default function Profile() {
             <button
               className="btn secondary"
               onClick={async () => {
+                await clearProtectedCache(q.data);
                 await request("/auth/logout", { method: "POST" });
                 router.replace("/login");
               }}

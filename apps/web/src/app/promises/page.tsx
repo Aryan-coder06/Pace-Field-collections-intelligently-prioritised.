@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CalendarClock } from "lucide-react";
-import { request, type Loan, type User } from "@/lib/api";
+import { ApiError, request, type Loan, type User } from "@/lib/api";
+import { cachePromiseSummaries, readCachedPromises } from "@/lib/offline";
 import { contactOpen } from "@/components/contact-button";
 
 type PromiseItem = Loan & {
@@ -31,6 +32,7 @@ export default function Promises() {
   const [reminderText, setReminderText] = useState("");
   const [language, setLanguage] = useState("en");
   const [simulated, setSimulated] = useState(false);
+  const [draftEngine, setDraftEngine] = useState("");
   const [history, setHistory] = useState<
     { from: string; to: string; reason: string; time: string }[]
   >([]);
@@ -40,12 +42,56 @@ export default function Promises() {
   });
   const q = useQuery({
     queryKey: ["promises"],
-    queryFn: () =>
-      request<PromiseItem[]>(
-        me.data?.role === "BRANCH_MANAGER"
-          ? "/manager/promises"
-          : "/officer/promises",
-      ),
+    queryFn: async () => {
+      try {
+        const response = await request<PromiseItem[]>(
+          me.data?.role === "BRANCH_MANAGER"
+            ? "/manager/promises"
+            : "/officer/promises",
+        );
+        if (me.data?.role === "FIELD_OFFICER")
+          await cachePromiseSummaries(
+            me.data,
+            response.map((item) => ({
+              id: item.id,
+              promise_id: item.promise_id,
+              loan_number: item.loan_number,
+              borrower: item.borrower,
+              dpd: item.dpd,
+              amount: item.amount,
+              promise_date: item.promise_date,
+              promise_status: item.promise_status,
+              version: item.version,
+            })),
+          );
+        return response;
+      } catch (error) {
+        if (
+          !(error instanceof ApiError) ||
+          !error.network ||
+          !me.data ||
+          me.data.role !== "FIELD_OFFICER"
+        )
+          throw error;
+        const cached = await readCachedPromises(me.data);
+        return cached.map((item) => ({
+          ...item,
+          legal_name: item.borrower,
+          phone: "",
+          address: "",
+          pincode: "",
+          product: "",
+          outstanding: "0",
+          overdue: "0",
+          score: 0,
+          band: "MEDIUM",
+          reasons: [],
+          assignment_version: 1,
+          priority_source: "SEEDED" as const,
+          officer: undefined,
+        }));
+      }
+    },
     enabled: Boolean(me.data),
   });
   const items = q.data?.filter((item) =>
@@ -155,6 +201,7 @@ export default function Promises() {
                     setReason("");
                     setReminderText("");
                     setSimulated(false);
+                    setDraftEngine("");
                     setHistory(
                       await request<
                         {
@@ -233,10 +280,16 @@ export default function Promises() {
                     try {
                       setReminderText(
                         (
-                          await request<{ message: string }>(
+                          await request<{
+                            message: string;
+                            drafting_engine: string;
+                          }>(
                             `/promises/${selected.promise_id}/reminder?language=${language}`,
                           )
                         ).message,
+                      );
+                      setDraftEngine(
+                        "Approved template · human review required",
                       );
                     } catch (cause) {
                       setError(
@@ -253,6 +306,7 @@ export default function Promises() {
               {reminderText && (
                 <>
                   <p>{reminderText}</p>
+                  <small>{draftEngine}</small>
                   {me.data?.role === "FIELD_OFFICER" && (
                     <button
                       className="btn secondary"

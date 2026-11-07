@@ -2,11 +2,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, MapPin, ShieldCheck } from "lucide-react";
 import { ContactButton } from "@/components/contact-button";
 import { OutcomeSheet } from "@/components/outcome-sheet";
-import { request, type Loan } from "@/lib/api";
+import { ApiError, request, type Loan, type User } from "@/lib/api";
+import { readCachedQueue } from "@/lib/offline";
 const money = (n: string | number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -17,13 +18,28 @@ const compact = (n: string | number) => `₹${(Number(n) / 100000).toFixed(2)}L`
 type LoanDetails = Loan & {
   history: { occurred_at: string; event: string; officer: string }[];
   promises: { amount: string; promise_date: string; status: string }[];
+  offline_cached?: boolean;
 };
 export default function LoanDetail() {
+  const client = useQueryClient();
   const [showOutcome, setShowOutcome] = useState(false);
   const { id } = useParams<{ id: string }>();
   const q = useQuery({
     queryKey: ["loan", id],
-    queryFn: () => request<LoanDetails>(`/loans/${id}`),
+    queryFn: async () => {
+      const user = client.getQueryData<User>(["me"]);
+      if (!user) return request<LoanDetails>(`/loans/${id}`);
+      try {
+        return await request<LoanDetails>(`/loans/${id}`);
+      } catch (error) {
+        if (!(error instanceof ApiError) || !error.network) throw error;
+        const cached = (await readCachedQueue(user)).find(
+          (loan) => String(loan.id) === id,
+        );
+        if (!cached) throw error;
+        return { ...cached, history: [], promises: [], offline_cached: true };
+      }
+    },
   });
   if (q.isLoading)
     return <div className="detail-loading">Loading account…</div>;
@@ -69,6 +85,12 @@ export default function LoanDetail() {
             {l.band} PRIORITY
           </span>
         </div>
+        {l.offline_cached && (
+          <p className="offline-detail-note" role="status">
+            Offline record · showing the last verified assignment. Contact
+            details are hidden until Pace reconnects.
+          </p>
+        )}
         <section className="detail-hero surface">
           <div>
             <span className="eyebrow">OUTSTANDING AMOUNT</span>
@@ -101,7 +123,9 @@ export default function LoanDetail() {
               ))}
             </ul>
             <p className="muted small-note">
-              Seeded demonstration score · recommendation support only
+              {l.priority_source === "TRAINED_MODEL"
+                ? `Trained recommendation · ${l.priority_model_version} · advisory only`
+                : "Seeded demonstration score · recommendation support only"}
             </p>
           </section>
           <section className="surface panel">
@@ -136,24 +160,26 @@ export default function LoanDetail() {
             )}
           </section>
         </div>
-        <section className="surface contact-panel">
-          <div>
-            <span className="eyebrow">BORROWER CONTACT</span>
-            <b>{l.phone}</b>
-            <span className="muted">{l.address}</span>
-          </div>
-          <div className="contact-actions">
-            <ContactButton loanId={l.id} borrower={l.borrower} />
-            <a
-              className="btn secondary"
-              href={`https://maps.google.com/?q=${encodeURIComponent(`${l.address} ${l.pincode} Indore`)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <MapPin size={16} /> Route
-            </a>
-          </div>
-        </section>
+        {!l.offline_cached && (
+          <section className="surface contact-panel">
+            <div>
+              <span className="eyebrow">BORROWER CONTACT</span>
+              <b>{l.phone}</b>
+              <span className="muted">{l.address}</span>
+            </div>
+            <div className="contact-actions">
+              <ContactButton loanId={l.id} borrower={l.borrower} />
+              <a
+                className="btn secondary"
+                href={`https://maps.google.com/?q=${encodeURIComponent(`${l.address} ${l.pincode} Indore`)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MapPin size={16} /> Route
+              </a>
+            </div>
+          </section>
+        )}
         <button
           className="btn outcome-btn"
           onClick={() => setShowOutcome(true)}
@@ -164,6 +190,7 @@ export default function LoanDetail() {
           <OutcomeSheet
             loanId={l.id}
             borrower={l.borrower}
+            assignmentVersion={l.assignment_version}
             onClose={() => setShowOutcome(false)}
           />
         )}

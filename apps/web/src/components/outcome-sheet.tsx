@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, MapPin, X } from "lucide-react";
-import { request } from "@/lib/api";
+import type { User } from "@/lib/api";
+import { enqueueOutcome, syncNow } from "@/lib/offline";
 
 type Outcome = "PAID" | "PROMISE_TO_PAY" | "NOT_REACHABLE" | "DISPUTE";
 const options: { value: Outcome; label: string; description: string }[] = [
@@ -36,10 +37,12 @@ export function OutcomeSheet({
   loanId,
   borrower,
   onClose,
+  assignmentVersion,
 }: {
   loanId: number;
   borrower: string;
   onClose: () => void;
+  assignmentVersion: number;
 }) {
   const qc = useQueryClient();
   const [type, setType] = useState<Outcome | null>(null);
@@ -48,7 +51,7 @@ export function OutcomeSheet({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState<"SYNCED" | "QUEUED" | null>(null);
   const [eventId, setEventId] = useState(() => crypto.randomUUID());
   async function location(): Promise<Location> {
     if (!navigator.geolocation) return { location_status: "UNAVAILABLE" };
@@ -87,20 +90,35 @@ export function OutcomeSheet({
     setError("");
     try {
       const gps = await location();
-      await request(`/loans/${loanId}/outcomes`, {
-        method: "POST",
-        body: JSON.stringify({
-          device_event_id: eventId,
+      const user = qc.getQueryData<User>(["me"]);
+      if (!user)
+        throw new Error(
+          "Your verified session is required to save this outcome.",
+        );
+      const queued = await enqueueOutcome(
+        user,
+        loanId,
+        assignmentVersion,
+        {
           outcome_type: type,
-          occurred_at: new Date().toISOString(),
           notes,
           reported_amount: type === "PAID" && amount ? amount : null,
           promised_amount: type === "PROMISE_TO_PAY" ? amount : null,
           promise_date: type === "PROMISE_TO_PAY" ? date : null,
           ...gps,
-        }),
-      });
-      setSuccess(true);
+        },
+        eventId,
+      );
+      const results = await syncNow(user);
+      const result = results.find(
+        (item) => item.client_event_id === queued.client_event_id,
+      );
+      if (result?.status === "CONFLICT" || result?.status === "REJECTED") {
+        throw new Error(
+          result.error?.message ?? "The server could not accept this outcome.",
+        );
+      }
+      setSuccess(result?.status === "ACKNOWLEDGED" ? "SYNCED" : "QUEUED");
       setEventId(crypto.randomUUID());
       for (const key of [
         ["loan", String(loanId)],
@@ -133,10 +151,13 @@ export function OutcomeSheet({
         {success ? (
           <div className="outcome-success">
             <CheckCircle2 size={32} />
-            <h2>Outcome recorded</h2>
+            <h2>
+              {success === "SYNCED" ? "Outcome recorded" : "Saved on device"}
+            </h2>
             <p>
-              The account, promise tracker and branch activity now reflect your
-              update.
+              {success === "SYNCED"
+                ? "The server acknowledged this event and updated the branch record."
+                : "This outcome is safely queued. Pace will verify and sync it when the API is reachable."}
             </p>
             <button className="btn" onClick={onClose}>
               Done

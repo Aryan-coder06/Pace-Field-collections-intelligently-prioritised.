@@ -1,6 +1,17 @@
 import type { LoanSummary, PaceUser } from "@pace/types";
 
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+    public readonly network = false,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const send = async () => {
     try {
@@ -15,8 +26,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
         },
       });
     } catch {
-      throw new Error(
+      throw new ApiError(
         "Pace can’t reach the service. Check your connection and try again.",
+        0,
+        "NETWORK_UNAVAILABLE",
+        true,
       );
     }
   };
@@ -31,12 +45,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = body?.detail;
-    throw new Error(
+    throw new ApiError(
       typeof detail === "string"
         ? detail
         : (detail?.message ??
             detail?.code ??
             "Something went wrong. Please try again."),
+      response.status,
+      typeof detail === "object" ? detail?.code : undefined,
     );
   }
   return response.json() as Promise<T>;

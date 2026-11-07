@@ -21,7 +21,18 @@ import {
   UsersRound,
   FileUp,
 } from "lucide-react";
-import { request, type Loan, type User } from "@/lib/api";
+import { ApiError, request, type Loan, type User } from "@/lib/api";
+import {
+  cacheOfficerQueue,
+  checkApiConnectivity,
+  clearProtectedCache,
+  getConnectivity,
+  getServerConnectivity,
+  pendingCount,
+  readCachedQueue,
+  subscribeConnectivity,
+  syncNow,
+} from "@/lib/offline";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 const inr = (value: string | number) =>
@@ -43,16 +54,6 @@ const businessDate = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
   timeZone: "Asia/Kolkata",
 }).format(new Date());
-function subscribeToConnection(onChange: () => void) {
-  window.addEventListener("online", onChange);
-  window.addEventListener("offline", onChange);
-  return () => {
-    window.removeEventListener("online", onChange);
-    window.removeEventListener("offline", onChange);
-  };
-}
-const getConnectionState = () => navigator.onLine;
-const getServerConnectionState = () => true;
 function ErrorBox({ message, retry }: { message: string; retry: () => void }) {
   return (
     <div className="surface" style={{ padding: 24 }}>
@@ -72,9 +73,19 @@ export default function Home() {
     retry: false,
   });
   useEffect(() => {
-    if (me.isError) router.replace("/login");
-  }, [me.isError, router]);
+    if (me.error instanceof ApiError && [401, 403].includes(me.error.status))
+      router.replace("/login");
+  }, [me.error, router]);
   if (me.isLoading) return <main className="loading">PACE</main>;
+  if (me.isError && !me.data)
+    return (
+      <main className="detail-wrap">
+        <ErrorBox
+          message="Pace must verify your session online before protected offline data can be unlocked. Reconnect, then try again."
+          retry={() => me.refetch()}
+        />
+      </main>
+    );
   if (!me.data) return null;
   return me.data.role === "FIELD_OFFICER" ? (
     <Officer user={me.data} />
@@ -84,25 +95,77 @@ export default function Home() {
 }
 function Officer({ user }: { user: User }) {
   const router = useRouter();
+  const [fromCache, setFromCache] = useState(false);
+  const [pending, setPending] = useState(0);
   const q = useQuery({
     queryKey: ["today"],
-    queryFn: () =>
-      request<{
-        accounts: number;
-        outstanding_total: string;
-        completed: number;
-        items: Loan[];
-      }>("/officer/today"),
+    queryFn: async () => {
+      try {
+        const response = await request<{
+          accounts: number;
+          outstanding_total: string;
+          completed: number;
+          items: Loan[];
+        }>("/officer/today");
+        await cacheOfficerQueue(user, response.items);
+        setFromCache(false);
+        return response;
+      } catch (error) {
+        if (!(error instanceof ApiError) || !error.network) throw error;
+        const items = await readCachedQueue(user);
+        if (!items.length) throw error;
+        setFromCache(true);
+        return {
+          accounts: items.length,
+          outstanding_total: items
+            .reduce((total, item) => total + Number(item.outstanding), 0)
+            .toFixed(2),
+          completed: items.filter((item) => item.touched).length,
+          items,
+        };
+      }
+    },
   });
+  const refetchToday = q.refetch;
   const [active, setActive] = useState("Today");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("priority");
   const [filter, setFilter] = useState("all");
-  const online = useSyncExternalStore(
-    subscribeToConnection,
-    getConnectionState,
-    getServerConnectionState,
+  const connectivity = useSyncExternalStore(
+    subscribeConnectivity,
+    getConnectivity,
+    getServerConnectivity,
   );
+  const online = connectivity === "ONLINE";
+  useEffect(() => {
+    let active = true;
+    const refreshPending = async () => {
+      const count = await pendingCount(user);
+      if (active) setPending(count);
+    };
+    const synchronize = async () => {
+      if (await checkApiConnectivity()) {
+        const results = await syncNow(user);
+        if (results.length) {
+          await refetchToday();
+        }
+      }
+      await refreshPending();
+    };
+    const onNetwork = () => void synchronize();
+    window.addEventListener("online", onNetwork);
+    window.addEventListener("offline", onNetwork);
+    window.addEventListener("focus", onNetwork);
+    const timer = window.setInterval(synchronize, 15_000);
+    void synchronize();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("online", onNetwork);
+      window.removeEventListener("offline", onNetwork);
+      window.removeEventListener("focus", onNetwork);
+    };
+  }, [user, refetchToday]);
   const visible = [...(q.data?.items ?? [])]
     .filter((item) =>
       `${item.borrower} ${item.loan_number}`
@@ -132,12 +195,18 @@ function Officer({ user }: { user: User }) {
           <span className="brand-mark">P</span>pace
         </Link>
         <span className={`online ${online ? "" : "offline"}`}>
-          <i /> {online ? "Online" : "Offline"}
+          <i />{" "}
+          {online
+            ? "Online"
+            : connectivity === "CHECKING"
+              ? "Checking"
+              : "Offline"}
         </span>
         <button
           className="avatar"
           aria-label="Profile"
           onClick={async () => {
+            await clearProtectedCache(user);
             await request("/auth/logout", { method: "POST" });
             router.replace("/login");
           }}
@@ -154,9 +223,17 @@ function Officer({ user }: { user: User }) {
             <p className="eyebrow">
               {businessDate.toLocaleUpperCase("en-IN")}{" "}
               <span className={`sync ${online ? "" : "offline"}`}>
-                <i /> {online ? "CONNECTED" : "NO CONNECTION"}
+                <i /> {online ? "API CONNECTED" : "OFFLINE MODE"}
               </span>
             </p>
+            {(fromCache || pending > 0) && (
+              <p className="offline-context" role="status">
+                {fromCache ? "Showing your last verified queue. " : ""}
+                {pending > 0
+                  ? `${pending} outcome${pending === 1 ? "" : "s"} waiting to sync.`
+                  : ""}
+              </p>
+            )}
             <h1>Good morning, {user.name.split(" ")[0]}</h1>
             <p className="muted">
               Your route is ready. Start with the accounts that need you most.
@@ -423,6 +500,7 @@ function Manager({ user }: { user: User }) {
     ["Recent activity", Activity],
     ["Promises", WalletCards],
     ["Imports", FileUp],
+    ["AI review", Sparkles],
   ] as const;
   return (
     <div className="manager-shell">
@@ -451,9 +529,11 @@ function Manager({ user }: { user: User }) {
                     ? "#officers"
                     : label === "Imports"
                       ? "/imports"
-                      : label === "Promises"
-                        ? "/promises"
-                        : "#activity"
+                      : label === "AI review"
+                        ? "/ai-review"
+                        : label === "Promises"
+                          ? "/promises"
+                          : "#activity"
               }
               className={`nav-item ${tab === label ? "active" : ""}`}
               onClick={() => setTab(label)}
