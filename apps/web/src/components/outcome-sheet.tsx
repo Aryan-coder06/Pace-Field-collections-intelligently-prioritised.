@@ -1,31 +1,55 @@
 "use client";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, MapPin, X } from "lucide-react";
-import type { User } from "@/lib/api";
+import { request, type User } from "@/lib/api";
 import { enqueueOutcome, syncNow } from "@/lib/offline";
+import { translate, type Language } from "@/lib/i18n";
 
 type Outcome = "PAID" | "PROMISE_TO_PAY" | "NOT_REACHABLE" | "DISPUTE";
-const options: { value: Outcome; label: string; description: string }[] = [
+const englishOptions: { value: Outcome; label: string; description: string }[] =
+  [
+    {
+      value: "PAID",
+      label: "Paid (reported)",
+      description: "Record a reported collection, pending verification",
+    },
+    {
+      value: "PROMISE_TO_PAY",
+      label: "Promise to pay",
+      description: "Record amount and agreed due date",
+    },
+    {
+      value: "NOT_REACHABLE",
+      label: "Not reachable",
+      description: "No borrower contact was made",
+    },
+    {
+      value: "DISPUTE",
+      label: "Dispute",
+      description: "Flag this account for manager review",
+    },
+  ];
+const hindiOptions: typeof englishOptions = [
   {
     value: "PAID",
-    label: "Paid (reported)",
-    description: "Record a reported collection, pending verification",
+    label: "भुगतान की सूचना",
+    description: "सत्यापन बाकी भुगतान सूचना दर्ज करें",
   },
   {
     value: "PROMISE_TO_PAY",
-    label: "Promise to pay",
-    description: "Record amount and agreed due date",
+    label: "भुगतान का वायदा",
+    description: "तय राशि और तारीख दर्ज करें",
   },
   {
     value: "NOT_REACHABLE",
-    label: "Not reachable",
-    description: "No borrower contact was made",
+    label: "संपर्क नहीं हुआ",
+    description: "उधारकर्ता से संपर्क नहीं हो सका",
   },
   {
     value: "DISPUTE",
-    label: "Dispute",
-    description: "Flag this account for manager review",
+    label: "विवाद",
+    description: "प्रबंधक की समीक्षा के लिए चिह्नित करें",
   },
 ];
 type Location = {
@@ -45,6 +69,14 @@ export function OutcomeSheet({
   assignmentVersion: number;
 }) {
   const qc = useQueryClient();
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => request<User>("/auth/me"),
+  });
+  const currentUser = me.data;
+  const language = (currentUser?.language_preference ?? "en") as Language;
+  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const options = language === "hi" ? hindiOptions : englishOptions;
   const [type, setType] = useState<Outcome | null>(null);
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState("");
@@ -90,7 +122,7 @@ export function OutcomeSheet({
     setError("");
     try {
       const gps = await location();
-      const user = qc.getQueryData<User>(["me"]);
+      const user = me.data;
       if (!user)
         throw new Error(
           "Your verified session is required to save this outcome.",
@@ -151,22 +183,20 @@ export function OutcomeSheet({
         {success ? (
           <div className="outcome-success">
             <CheckCircle2 size={32} />
-            <h2>
-              {success === "SYNCED" ? "Outcome recorded" : "Saved on device"}
-            </h2>
+            <h2>{success === "SYNCED" ? t("synced") : t("savedDevice")}</h2>
             <p>
               {success === "SYNCED"
                 ? "The server acknowledged this event and updated the branch record."
                 : "This outcome is safely queued. Pace will verify and sync it when the API is reachable."}
             </p>
             <button className="btn" onClick={onClose}>
-              Done
+              {t("done")}
             </button>
           </div>
         ) : (
           <>
             <span className="eyebrow">FIELD RECORD · {borrower}</span>
-            <h2 id="outcome-title">Log an outcome</h2>
+            <h2 id="outcome-title">{t("logOutcome")}</h2>
             <p className="muted">
               Select what happened. Payment entries are reports, not verified
               settlements.
@@ -241,12 +271,13 @@ export function OutcomeSheet({
               disabled={
                 !type ||
                 busy ||
+                !me.data ||
                 (type === "PROMISE_TO_PAY" && (!amount || !date)) ||
                 (type === "DISPUTE" && notes.trim().length < 8)
               }
               onClick={save}
             >
-              {busy ? "Saving outcome…" : "Save outcome"}
+              {busy ? `${t("saving")}…` : t("saveOutcome")}
             </button>
           </>
         )}

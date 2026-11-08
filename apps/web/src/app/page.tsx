@@ -34,6 +34,7 @@ import {
   syncNow,
 } from "@/lib/offline";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { translate, type Language } from "@/lib/i18n";
 
 const inr = (value: string | number) =>
   new Intl.NumberFormat("en-IN", {
@@ -94,6 +95,8 @@ export default function Home() {
   );
 }
 function Officer({ user }: { user: User }) {
+  const language = user.language_preference as Language;
+  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
   const router = useRouter();
   const [fromCache, setFromCache] = useState(false);
   const [pending, setPending] = useState(0);
@@ -127,7 +130,7 @@ function Officer({ user }: { user: User }) {
     },
   });
   const refetchToday = q.refetch;
-  const [active, setActive] = useState("Today");
+  const [active, setActive] = useState("today");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("priority");
   const [filter, setFilter] = useState("all");
@@ -197,10 +200,10 @@ function Officer({ user }: { user: User }) {
         <span className={`online ${online ? "" : "offline"}`}>
           <i />{" "}
           {online
-            ? "Online"
+            ? t("online")
             : connectivity === "CHECKING"
-              ? "Checking"
-              : "Offline"}
+              ? t("checking")
+              : t("offline")}
         </span>
         <button
           className="avatar"
@@ -223,24 +226,25 @@ function Officer({ user }: { user: User }) {
             <p className="eyebrow">
               {businessDate.toLocaleUpperCase("en-IN")}{" "}
               <span className={`sync ${online ? "" : "offline"}`}>
-                <i /> {online ? "API CONNECTED" : "OFFLINE MODE"}
+                <i />{" "}
+                {online
+                  ? t("connected").toUpperCase()
+                  : t("offlineMode").toUpperCase()}
               </span>
             </p>
             {(fromCache || pending > 0) && (
               <p className="offline-context" role="status">
                 {fromCache ? "Showing your last verified queue. " : ""}
-                {pending > 0
-                  ? `${pending} outcome${pending === 1 ? "" : "s"} waiting to sync.`
-                  : ""}
+                {pending > 0 ? `${pending} · ${t("pending")}` : ""}
               </p>
             )}
-            <h1>Good morning, {user.name.split(" ")[0]}</h1>
-            <p className="muted">
-              Your route is ready. Start with the accounts that need you most.
-            </p>
+            <h1>
+              {t("greeting")}, {user.name.split(" ")[0]}
+            </h1>
+            <p className="muted">{t("routeReady")}</p>
           </div>
           <div className="day-chip">
-            <CalendarDays size={16} /> My day
+            <CalendarDays size={16} /> {t("myDay")}
           </div>
         </div>
         {q.isLoading ? (
@@ -255,19 +259,21 @@ function Officer({ user }: { user: User }) {
           <>
             <section className="summary surface">
               <div>
-                <span className="eyebrow">TODAY’S PORTFOLIO</span>
+                <span className="eyebrow">{t("portfolio").toUpperCase()}</span>
                 <strong>
-                  {q.data!.accounts} <small>accounts</small>
+                  {q.data!.accounts} <small>{t("accounts")}</small>
                 </strong>
               </div>
               <div className="summary-divider" />
               <div>
-                <span className="eyebrow">TOTAL OUTSTANDING</span>
+                <span className="eyebrow">
+                  {t("outstanding").toUpperCase()}
+                </span>
                 <strong>{compact(q.data!.outstanding_total)}</strong>
               </div>
               <div className="progress-wrap">
                 <div className="progress-top">
-                  <span>Route progress</span>
+                  <span>{t("progress")}</span>
                   <b>
                     {q.data!.completed} / {q.data!.accounts}
                   </b>
@@ -283,8 +289,8 @@ function Officer({ user }: { user: User }) {
             </section>
             <div className="queue-heading">
               <div>
-                <span className="eyebrow">YOUR QUEUE</span>
-                <h2>Prioritised for today</h2>
+                <span className="eyebrow">{t("queue").toUpperCase()}</span>
+                <h2>{t("prioritised")}</h2>
               </div>
               <span className="queue-count">{visible.length} accounts</span>
             </div>
@@ -409,16 +415,16 @@ function Officer({ user }: { user: User }) {
       </main>
       <nav className="bottom-nav">
         {[
-          ["Today", CalendarDays, "/"],
-          ["Promises", WalletCards, "/promises"],
-          ["Activity", Activity, "/activity"],
-          ["Profile", ContactRound, "/profile"],
-        ].map(([label, Icon, href]) => (
+          ["today", t("today"), CalendarDays, "/"],
+          ["promises", t("promises"), WalletCards, "/promises"],
+          ["activity", t("activity"), Activity, "/activity"],
+          ["profile", t("profile"), ContactRound, "/profile"],
+        ].map(([key, label, Icon, href]) => (
           <Link
             href={href as string}
-            className={active === label ? "selected" : ""}
-            key={label as string}
-            onClick={() => setActive(label as string)}
+            className={active === key ? "selected" : ""}
+            key={key as string}
+            onClick={() => setActive(key as string)}
           >
             <Icon size={20} />
             <span>{label as string}</span>

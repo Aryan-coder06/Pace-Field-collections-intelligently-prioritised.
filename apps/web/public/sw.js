@@ -1,6 +1,6 @@
-const CACHE = "pace-shell-v3";
+const CACHE = "pace-shell-v4";
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(["/login", "/icon.svg"])));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(["/login", "/icon.svg", "/icon-192.png", "/icon-512.png"])));
 });
 self.addEventListener("message", event => {
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();

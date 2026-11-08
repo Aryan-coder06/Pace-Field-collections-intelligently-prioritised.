@@ -1899,6 +1899,15 @@ input:focus-visible {
   .manager-shell .branch-select {
     display: none;
   }
+  .manager-shell .sidebar nav {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .manager-shell .nav-item {
+    flex: none;
+  }
   .manager-shell .manager-main {
     padding: 28px 24px 50px;
   }
@@ -2499,6 +2508,48 @@ input:focus-visible {
   font-size: 10px;
   font-weight: 750;
   cursor: pointer;
+}
+.language-setting {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 1px solid #eceef3;
+  border-bottom: 1px solid #eceef3;
+}
+.language-setting > span {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+.language-setting small {
+  color: #7d8493;
+  font-size: 11px;
+}
+.language-setting > div {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f1f2f6;
+}
+.language-setting button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #6c7484;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.language-setting button.active {
+  background: #fff;
+  color: #3444ac;
+  box-shadow: 0 1px 3px rgb(24 31 52 / 10%);
 }
 .update-toast {
   position: fixed;

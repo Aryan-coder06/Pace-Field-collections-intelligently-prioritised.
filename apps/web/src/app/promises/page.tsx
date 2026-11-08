@@ -6,6 +6,7 @@ import { ArrowLeft, CalendarClock } from "lucide-react";
 import { ApiError, request, type Loan, type User } from "@/lib/api";
 import { cachePromiseSummaries, readCachedPromises } from "@/lib/offline";
 import { contactOpen } from "@/components/contact-button";
+import { OfficerBottomNav } from "@/components/officer-bottom-nav";
 
 type PromiseItem = Loan & {
   amount: string;
@@ -387,22 +388,7 @@ export default function Promises() {
           </section>
         </div>
       )}
-      {me.data?.role !== "BRANCH_MANAGER" && (
-        <nav className="bottom-nav">
-          <Link href="/">
-            <span>Today</span>
-          </Link>
-          <Link className="selected" href="/promises">
-            <span>Promises</span>
-          </Link>
-          <Link href="/activity">
-            <span>Activity</span>
-          </Link>
-          <Link href="/profile">
-            <span>Profile</span>
-          </Link>
-        </nav>
-      )}
+      <OfficerBottomNav active="promises" />
     </div>
   );
 }

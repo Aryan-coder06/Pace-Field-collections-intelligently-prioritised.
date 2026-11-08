@@ -5,6 +5,7 @@ export type PaceUser = {
   email: string;
   role: Role;
   branch_id: number;
+  language_preference: "en" | "hi";
 };
 export type LoanSummary = {
   id: number;

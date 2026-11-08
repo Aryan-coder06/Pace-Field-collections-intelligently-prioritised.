@@ -1,7 +1,10 @@
 "use client";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Phone } from "lucide-react";
 import { request } from "@/lib/api";
+import type { User } from "@/lib/api";
+import { translate, type Language } from "@/lib/i18n";
 
 export function contactOpen() {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -22,6 +25,10 @@ export function ContactButton({
   borrower: string;
   className?: string;
 }) {
+  const client = useQueryClient();
+  const language = (client.getQueryData<User>(["me"])?.language_preference ??
+    "en") as Language;
+  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const open = contactOpen();
@@ -53,15 +60,11 @@ export function ContactButton({
         onClick={call}
         disabled={!open || busy}
         aria-label={`Call ${borrower}`}
-        title={
-          !open
-            ? "Borrower contact is available between 8:00 AM and 7:00 PM."
-            : undefined
-        }
+        title={!open ? t("contactWindow") : undefined}
       >
-        <Phone size={16} /> {busy ? "Checking…" : "Call"}
+        <Phone size={16} /> {busy ? `${t("checkingContact")}…` : t("call")}
       </button>
-      {!open && <small>Contact: 8 AM–7 PM</small>}
+      {!open && <small>{t("contactWindow")}</small>}
       {error && <small role="alert">{error}</small>}
     </span>
   );
