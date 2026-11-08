@@ -18,6 +18,8 @@ Copy `.env.example` to `.env`, replace `JWT_SECRET` with a random value (`openss
 
 Demo accounts (development only): `manager@pace.demo`, `rahul@pace.demo`, `neha@pace.demo`, `imran@pace.demo`; password `PaceDemo!2026`. Synthetic data only.
 
+The public product landing page is at `/landing`. It uses screenshots from the working demo and links into `/login`; the authenticated operations app remains at `/`.
+
 Run API checks with `cd apps/api && uv run ruff check app migrations tests && uv run pytest`. Frontend checks from the repository root: `pnpm lint`, `pnpm typecheck`, `pnpm build`, and `pnpm format:check`.
 
 ## Stage 2 workflows

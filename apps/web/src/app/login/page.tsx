@@ -43,7 +43,7 @@ export default function Login() {
   return (
     <main className="login-page">
       <section className="login-card">
-        <Link href="/" className="brand">
+        <Link href="/landing" className="brand" aria-label="About Pace">
           <span className="brand-mark">P</span>pace
         </Link>
         <span className="eyebrow login-eyebrow">
