@@ -31,3 +31,7 @@
 - ASSUMPTION-029: Priority reasons are the three largest positive standardized feature contributions, translated into controlled business-language explanations rather than SHAP values.
 - ASSUMPTION-030: A manager rank override changes operational ordering but does not overwrite the model score; the rationale and version are retained for audit and back-testing.
 - ASSUMPTION-031: Reminder drafting uses approved bilingual templates with controlled variable substitution and mandatory human review. It is not presented as unconstrained generative AI.
+- ASSUMPTION-032: Login throttling is process-local in the modular monolith; a production multi-instance deployment should move the counter to shared infrastructure such as Redis.
+- ASSUMPTION-033: A persisted `SYNCING` outbox event may be safely replayed during foreground recovery because the server receipt is keyed by immutable client event UUID.
+- ASSUMPTION-034: Hindi support in Stage 4 covers the officer navigation, queue, common outcome flow, sync states and contact notice; manager operations remain English-first.
+- ASSUMPTION-035: The public deployment URL is intentionally omitted until the repository owner supplies hosting credentials and approves a live synthetic-demo deployment.

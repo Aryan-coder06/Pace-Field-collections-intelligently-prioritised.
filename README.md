@@ -57,6 +57,15 @@ PAID is a reported field outcome. It does not verify bank settlement or reduce a
 
 See `docs/OFFLINE.md` and `docs/STAGE3_ARCHITECTURE.md` for protocol, privacy and model details.
 
-## Deferred to Stage 4 / production integration
+## Stage 4 hardening and validation
+
+- Cookie-authenticated mutations use double-submit CSRF validation; login failures are rate-limited, and production refuses weak JWT/cookie/database settings.
+- Protected client data remains scoped by user and branch. Logout clears cached portfolio projections; unsynchronized event records are retained as isolated outbox data rather than silently discarded.
+- The PWA now ships raster icons and a shell cache, while API projections remain outside generic service-worker caching.
+- Officer language preference persists; the critical mobile workflow supports reviewed Hindi labels alongside English.
+- Playwright runs against a disposable migrated PostgreSQL database. It exercises imports, assignment and AI overrides, online promise creation, offline persistence/replay, reassignment conflicts, reminder templates, and six responsive viewports.
+- `render.yaml`, `apps/api/Dockerfile`, `apps/web/vercel.json`, and `deployment.md` prepare deployment. A public deployment is not claimed because this workspace has no hosting credentials or deployment approval.
+
+## Deferred to production integration
 
 Real payment verification, SMS/WhatsApp delivery, managed-device encryption policy, remote wipe, automated job scheduling, production model monitoring alerts and universal background sync remain external integrations. Pace does not represent IndexedDB as encrypted storage or reported PAID outcomes as bank settlement.
