@@ -11,7 +11,10 @@ async function performSync(user: User): Promise<SyncResult[]> {
   const events = await db.outbox
     .where("[userId+branchId]")
     .equals([user.id, user.branch_id])
-    .filter((event) => event.sync_status === "PENDING")
+    .filter(
+      (event) =>
+        event.sync_status === "PENDING" || event.sync_status === "SYNCING",
+    )
     .sortBy("queued_at");
   if (!events.length) return [];
   const attemptedAt = new Date().toISOString();

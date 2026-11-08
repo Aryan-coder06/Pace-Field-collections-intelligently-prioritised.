@@ -24,6 +24,10 @@ export default function LoanDetail() {
   const client = useQueryClient();
   const [showOutcome, setShowOutcome] = useState(false);
   const { id } = useParams<{ id: string }>();
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => request<User>("/auth/me"),
+  });
   const q = useQuery({
     queryKey: ["loan", id],
     queryFn: async () => {
@@ -182,9 +186,11 @@ export default function LoanDetail() {
         )}
         <button
           className="btn outcome-btn"
+          disabled={!me.data}
           onClick={() => setShowOutcome(true)}
         >
-          Log outcome <ArrowUpRight size={16} />
+          {me.isLoading ? "Verifying session…" : "Log outcome"}{" "}
+          <ArrowUpRight size={16} />
         </button>
         {showOutcome && (
           <OutcomeSheet

@@ -87,6 +87,23 @@ def persist_rejection(
         result_json=result or {},
     )
     db.add(receipt)
+    if event.entity_id.isdigit():
+        db.add(
+            AuditEvent(
+                actor_user_id=user.id,
+                branch_id=user.branch_id,
+                entity_type="Loan",
+                entity_id=event.entity_id,
+                action="Offline sync conflict"
+                if status == "CONFLICT"
+                else "Offline event rejected",
+                metadata_json={
+                    "client_event_id": str(event.client_event_id),
+                    "code": code,
+                    "sync_status": status,
+                },
+            )
+        )
     db.commit()
     return receipt_view(receipt)
 
@@ -127,15 +144,44 @@ def sync_events(
                 )
             )
             continue
+        day = branch_today(db, user.branch_id)
         assignment = db.scalar(
             select(Assignment).where(
                 Assignment.loan_id == loan_id,
                 Assignment.officer_id == user.id,
-                Assignment.assignment_date == branch_today(db, user.branch_id),
+                Assignment.assignment_date == day,
                 Assignment.status == "ACTIVE",
             )
         )
         if not assignment:
+            historical = db.scalar(
+                select(Assignment).where(
+                    Assignment.loan_id == loan_id,
+                    Assignment.officer_id == user.id,
+                    Assignment.assignment_date == day,
+                    Assignment.version >= event.base_version,
+                )
+            )
+            active_assignment = db.scalar(
+                select(Assignment).where(
+                    Assignment.loan_id == loan_id,
+                    Assignment.assignment_date == day,
+                    Assignment.status == "ACTIVE",
+                )
+            )
+            if historical and active_assignment:
+                results.append(
+                    persist_rejection(
+                        db,
+                        user,
+                        event,
+                        "CONFLICT",
+                        "ASSIGNMENT_REASSIGNED",
+                        "This account was reassigned after it was cached. Your work was preserved for review.",
+                        {"current_version": active_assignment.version},
+                    )
+                )
+                continue
             results.append(
                 persist_rejection(
                     db,
@@ -185,7 +231,9 @@ def sync_events(
         except HTTPException as exc:
             db.rollback()
             detail = exc.detail
-            message = detail if isinstance(detail, str) else detail.get("message", "Event rejected.")
+            message = (
+                detail if isinstance(detail, str) else detail.get("message", "Event rejected.")
+            )
             results.append(
                 persist_rejection(
                     db, user, event, "REJECTED", f"VALIDATION_{exc.status_code}", message
@@ -239,7 +287,9 @@ def auc_score(labels: list[int], predictions: list[float]) -> float | None:
     negatives = [p for y, p in zip(labels, predictions, strict=True) if y == 0]
     if not positives or not negatives:
         return None
-    wins = sum(1 if pos > neg else 0.5 if pos == neg else 0 for pos in positives for neg in negatives)
+    wins = sum(
+        1 if pos > neg else 0.5 if pos == neg else 0 for pos in positives for neg in negatives
+    )
     return wins / (len(positives) * len(negatives))
 
 
@@ -248,16 +298,18 @@ def training_rows(db: Session, branch_id: int):
     rows: list[tuple[list[float], int, date]] = []
     for loan in loans:
         snapshots = db.scalars(
-            select(Snapshot)
-            .where(Snapshot.loan_id == loan.id)
-            .order_by(Snapshot.snapshot_date)
+            select(Snapshot).where(Snapshot.loan_id == loan.id).order_by(Snapshot.snapshot_date)
         ).all()
         for index, (initial, follow) in enumerate(pairwise(snapshots)):
             gap = (follow.snapshot_date - initial.snapshot_date).days
             if 28 <= gap <= 32 and 1 <= initial.dpd <= 30:
                 previous = snapshots[index - 1] if index else None
                 rows.append(
-                    (feature_vector(initial, previous), int(31 <= follow.dpd <= 60), initial.snapshot_date)
+                    (
+                        feature_vector(initial, previous),
+                        int(31 <= follow.dpd <= 60),
+                        initial.snapshot_date,
+                    )
                 )
     return rows
 
@@ -269,7 +321,10 @@ def train_logistic(rows: list[tuple[list[float], int, date]]):
     cut = max(8, min(len(rows) - 4, round(len(rows) * 0.8)))
     training_vectors = vectors[:cut]
     training_labels = labels[:cut]
-    means = [sum(row[i] for row in training_vectors) / len(training_vectors) for i in range(len(FEATURE_NAMES))]
+    means = [
+        sum(row[i] for row in training_vectors) / len(training_vectors)
+        for i in range(len(FEATURE_NAMES))
+    ]
     scales = []
     for i, mean in enumerate(means):
         variance = sum((row[i] - mean) ** 2 for row in training_vectors) / len(training_vectors)
@@ -289,7 +344,10 @@ def train_logistic(rows: list[tuple[list[float], int, date]]):
     intercept = math.log(positive_rate / (1 - positive_rate))
     learning_rate = 0.08
     for _ in range(900):
-        predictions = [sigmoid(intercept + sum(w * x for w, x in zip(weights, row, strict=True))) for row in normalized]
+        predictions = [
+            sigmoid(intercept + sum(w * x for w, x in zip(weights, row, strict=True)))
+            for row in normalized
+        ]
         errors = [
             (prediction - label) * weight
             for prediction, label, weight in zip(
@@ -298,26 +356,60 @@ def train_logistic(rows: list[tuple[list[float], int, date]]):
         ]
         intercept -= learning_rate * sum(errors) / len(errors)
         for i in range(len(weights)):
-            gradient = sum(error * row[i] for error, row in zip(errors, normalized, strict=True)) / len(errors)
+            gradient = sum(
+                error * row[i] for error, row in zip(errors, normalized, strict=True)
+            ) / len(errors)
             weights[i] -= learning_rate * (gradient + 0.02 * weights[i])
     validation_vectors = vectors[cut:] or vectors
     validation_labels = labels[cut:] or labels
-    validation_normalized = [[(row[i] - means[i]) / scales[i] for i in range(len(FEATURE_NAMES))] for row in validation_vectors]
-    predictions = [sigmoid(intercept + sum(w * x for w, x in zip(weights, row, strict=True))) for row in validation_normalized]
+    validation_normalized = [
+        [(row[i] - means[i]) / scales[i] for i in range(len(FEATURE_NAMES))]
+        for row in validation_vectors
+    ]
+    predictions = [
+        sigmoid(intercept + sum(w * x for w, x in zip(weights, row, strict=True)))
+        for row in validation_normalized
+    ]
     predicted = [int(value >= 0.5) for value in predictions]
-    true_positive = sum(p == 1 and y == 1 for p, y in zip(predicted, validation_labels, strict=True))
-    false_positive = sum(p == 1 and y == 0 for p, y in zip(predicted, validation_labels, strict=True))
-    false_negative = sum(p == 0 and y == 1 for p, y in zip(predicted, validation_labels, strict=True))
+    true_positive = sum(
+        p == 1 and y == 1 for p, y in zip(predicted, validation_labels, strict=True)
+    )
+    false_positive = sum(
+        p == 1 and y == 0 for p, y in zip(predicted, validation_labels, strict=True)
+    )
+    false_negative = sum(
+        p == 0 and y == 1 for p, y in zip(predicted, validation_labels, strict=True)
+    )
     metrics = {
-        "auc": round(auc_score(validation_labels, predictions), 4) if auc_score(validation_labels, predictions) is not None else None,
-        "accuracy": round(sum(p == y for p, y in zip(predicted, validation_labels, strict=True)) / len(validation_labels), 4),
-        "precision": round(true_positive / (true_positive + false_positive), 4) if true_positive + false_positive else None,
-        "recall": round(true_positive / (true_positive + false_negative), 4) if true_positive + false_negative else None,
-        "brier": round(sum((p - y) ** 2 for p, y in zip(predictions, validation_labels, strict=True)) / len(validation_labels), 4),
+        "auc": round(auc_score(validation_labels, predictions), 4)
+        if auc_score(validation_labels, predictions) is not None
+        else None,
+        "accuracy": round(
+            sum(p == y for p, y in zip(predicted, validation_labels, strict=True))
+            / len(validation_labels),
+            4,
+        ),
+        "precision": round(true_positive / (true_positive + false_positive), 4)
+        if true_positive + false_positive
+        else None,
+        "recall": round(true_positive / (true_positive + false_negative), 4)
+        if true_positive + false_negative
+        else None,
+        "brier": round(
+            sum((p - y) ** 2 for p, y in zip(predictions, validation_labels, strict=True))
+            / len(validation_labels),
+            4,
+        ),
         "training_count": len(training_labels),
         "validation_count": len(validation_labels),
     }
-    return {"features": FEATURE_NAMES, "means": means, "scales": scales, "weights": weights, "intercept": intercept}, metrics
+    return {
+        "features": FEATURE_NAMES,
+        "means": means,
+        "scales": scales,
+        "weights": weights,
+        "intercept": intercept,
+    }, metrics
 
 
 def risk_reasons(vector: list[float], parameters: dict[str, object]) -> list[str]:
@@ -335,7 +427,11 @@ def risk_reasons(vector: list[float], parameters: dict[str, object]) -> list[str
     ]
     ordered = sorted(range(len(labels)), key=lambda i: contributions[i], reverse=True)
     reasons = [labels[i] for i in ordered if contributions[i] > 0][:3]
-    fallbacks = ["Account is within the active early-intervention cohort", "Collection follow-up is due", "Current exposure warrants review"]
+    fallbacks = [
+        "Account is within the active early-intervention cohort",
+        "Collection follow-up is due",
+        "Current exposure warrants review",
+    ]
     return (reasons + [item for item in fallbacks if item not in reasons])[:3]
 
 
@@ -375,12 +471,20 @@ def weekly_backtest(user: User = Depends(current_user), db: Session = Depends(db
                 if auc_score(labels, predictions) is not None
                 else None,
                 "brier": round(
-                    sum((prediction - label) ** 2 for prediction, label in zip(predictions, labels, strict=True)) / len(labels),
+                    sum(
+                        (prediction - label) ** 2
+                        for prediction, label in zip(predictions, labels, strict=True)
+                    )
+                    / len(labels),
                     4,
                 ),
             }
         )
-    return {"model_version": run.model_version, "periods": periods, "method": "Historical 28–32 day roll-forward grouped by ISO observation week"}
+    return {
+        "model_version": run.model_version,
+        "periods": periods,
+        "method": "Historical 28–32 day roll-forward grouped by ISO observation week",
+    }
 
 
 @router.post("/manager/ai/train")
@@ -389,7 +493,9 @@ def train_priorities(user: User = Depends(current_user), db: Session = Depends(d
     rows = training_rows(db, user.branch_id)
     labels = [row[1] for row in rows]
     if len(rows) < 12 or len(set(labels)) < 2:
-        raise HTTPException(422, "At least 12 historical observations with both outcomes are required.")
+        raise HTTPException(
+            422, "At least 12 historical observations with both outcomes are required."
+        )
     parameters, metrics = train_logistic(rows)
     version = f"pace-logit-v2-{user.branch_id}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
     run = PriorityModelRun(
@@ -408,7 +514,9 @@ def train_priorities(user: User = Depends(current_user), db: Session = Depends(d
     scored = 0
     for loan in loans:
         snapshots = db.scalars(
-            select(Snapshot).where(Snapshot.loan_id == loan.id).order_by(Snapshot.snapshot_date.desc())
+            select(Snapshot)
+            .where(Snapshot.loan_id == loan.id)
+            .order_by(Snapshot.snapshot_date.desc())
         ).all()
         if not snapshots:
             continue
@@ -442,7 +550,12 @@ def train_priorities(user: User = Depends(current_user), db: Session = Depends(d
         )
     )
     db.commit()
-    return {"model_version": version, "sample_count": len(rows), "scored_loans": scored, "metrics": metrics}
+    return {
+        "model_version": version,
+        "sample_count": len(rows),
+        "scored_loans": scored,
+        "metrics": metrics,
+    }
 
 
 @router.get("/manager/ai/overview")
@@ -481,7 +594,13 @@ def ai_overview(user: User = Depends(current_user), db: Session = Depends(db_ses
             }
         )
         queue.append(item)
-    queue.sort(key=lambda item: (item["override_rank"] is None, item["override_rank"] or 9999, -item["score"]))
+    queue.sort(
+        key=lambda item: (
+            item["override_rank"] is None,
+            item["override_rank"] or 9999,
+            -item["score"],
+        )
+    )
     return {
         "model": None
         if not run
@@ -548,7 +667,12 @@ def override_priority(
         )
     )
     db.commit()
-    return {"id": override.id, "rank": override.rank, "reason": override.reason, "version": override.version}
+    return {
+        "id": override.id,
+        "rank": override.rank,
+        "reason": override.reason,
+        "version": override.version,
+    }
 
 
 @router.get("/manager/sync/overview")

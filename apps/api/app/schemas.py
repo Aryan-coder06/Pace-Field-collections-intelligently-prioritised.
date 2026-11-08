@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.models import Role
 
@@ -16,6 +16,11 @@ class SessionOut(BaseModel):
     email: str
     role: Role
     branch_id: int
+    language_preference: str
+
+
+class PreferenceBody(BaseModel):
+    language_preference: str = Field(pattern="^(en|hi)$")
 
 
 class LoanOut(BaseModel):

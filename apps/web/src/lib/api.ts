@@ -12,18 +12,36 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
+function cookieValue(name: string) {
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${name}=`;
+  return document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length);
+}
+function mutationHeaders(method?: string): Record<string, string> {
+  if (!method || ["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()))
+    return {};
+  const token = cookieValue("pace_csrf");
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+}
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const send = async () => {
     try {
+      const headers = new Headers(init?.headers);
+      if (!(init?.body instanceof FormData))
+        headers.set("Content-Type", "application/json");
+      for (const [name, value] of Object.entries(
+        mutationHeaders(init?.method),
+      )) {
+        headers.set(name, value);
+      }
       return await fetch(`${API}${path}`, {
         ...init,
         credentials: "include",
-        headers: {
-          ...(init?.body instanceof FormData
-            ? {}
-            : { "Content-Type": "application/json" }),
-          ...init?.headers,
-        },
+        headers,
       });
     } catch {
       throw new ApiError(
@@ -39,6 +57,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const refreshed = await fetch(`${API}/auth/refresh`, {
       method: "POST",
       credentials: "include",
+      headers: mutationHeaders("POST"),
     });
     if (refreshed.ok) response = await send();
   }

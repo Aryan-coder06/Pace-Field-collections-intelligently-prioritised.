@@ -13,3 +13,6 @@ __pycache__/
 # Generated build metadata
 *.tsbuildinfo
 *.egg-info/
+playwright-report/
+test-results/
+tmp/

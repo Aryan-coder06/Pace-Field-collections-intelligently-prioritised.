@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -880,7 +880,7 @@ def promise_history(
 @router.get("/promises/{promise_id}/reminder")
 def reminder(
     promise_id: int,
-    language: str = "en",
+    language: str = Query(default="en", pattern="^(en|hi)$"),
     user: User = Depends(current_user),
     db: Session = Depends(db_session),
 ):
@@ -1057,7 +1057,7 @@ def manager_promises(user: User = Depends(current_user), db: Session = Depends(d
 @router.post("/promises/{promise_id}/send-reminder")
 def send_reminder(
     promise_id: int,
-    language: str = "en",
+    language: str = Query(default="en", pattern="^(en|hi)$"),
     user: User = Depends(current_user),
     db: Session = Depends(db_session),
 ):

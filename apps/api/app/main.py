@@ -1,6 +1,8 @@
 import hashlib
 import os
 import secrets
+import threading
+import time as monotonic_time
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +12,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from sqlalchemy import (
@@ -42,6 +45,7 @@ from app.schemas import (
     LoginBody,
     ManagerOverviewOut,
     OfficerWorkloadOut,
+    PreferenceBody,
     PromiseOut,
     SessionOut,
     TodayOut,
@@ -49,7 +53,16 @@ from app.schemas import (
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./pace.db")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(48)
+if ENVIRONMENT == "production":
+    if len(JWT_SECRET) < 32:
+        raise RuntimeError("JWT_SECRET must contain at least 32 characters in production.")
+    if not COOKIE_SECURE:
+        raise RuntimeError("COOKIE_SECURE must be true in production.")
+    if DATABASE_URL.startswith("sqlite"):
+        raise RuntimeError("Production requires PostgreSQL persistence.")
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
@@ -60,22 +73,126 @@ oauth = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
 app = FastAPI(title="Pace API", version="1.0")
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("WEB_ORIGIN", "http://localhost:3000").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("WEB_ORIGIN", "http://localhost:3000")],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_WINDOW_SECONDS", "300"))
+LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_RATE_MAX_FAILURES", "5"))
+_login_attempts: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def login_key(request: Request, email: str) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded or (request.client.host if request.client else "unknown")
+    return hashlib.sha256(f"{client_ip}:{email.lower()}".encode()).hexdigest()
+
+
+def check_login_rate(key: str):
+    now = monotonic_time.monotonic()
+    with _login_lock:
+        recent = [
+            stamp for stamp in _login_attempts.get(key, []) if now - stamp < LOGIN_WINDOW_SECONDS
+        ]
+        _login_attempts[key] = recent
+        if len(recent) >= LOGIN_MAX_FAILURES:
+            raise HTTPException(
+                429,
+                {
+                    "code": "LOGIN_RATE_LIMITED",
+                    "message": "Too many sign-in attempts. Wait a few minutes and try again.",
+                },
+                headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)},
+            )
+
+
+def record_login_failure(key: str):
+    with _login_lock:
+        _login_attempts.setdefault(key, []).append(monotonic_time.monotonic())
+
+
+def clear_login_failures(key: str):
+    with _login_lock:
+        _login_attempts.pop(key, None)
+
+
+def set_session_cookies(
+    response: Response,
+    user: User,
+    refresh_token: str,
+    csrf_token: str | None = None,
+):
+    access_minutes = int(os.getenv("ACCESS_TOKEN_MINUTES", "20"))
+    refresh_days = int(os.getenv("REFRESH_TOKEN_DAYS", "14"))
+    response.set_cookie(
+        "pace_access",
+        token_for(user),
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=access_minutes * 60,
+        path="/",
+    )
+    response.set_cookie(
+        "pace_refresh",
+        refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=refresh_days * 86400,
+        path="/auth",
+    )
+    response.set_cookie(
+        "pace_csrf",
+        csrf_token or secrets.token_urlsafe(32),
+        httponly=False,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=refresh_days * 86400,
+        path="/",
+    )
+
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path != "/auth/login":
+        cookie_authenticated = bool(
+            request.cookies.get("pace_access") or request.cookies.get("pace_refresh")
+        )
+        if cookie_authenticated:
+            cookie_token = request.cookies.get("pace_csrf", "")
+            header_token = request.headers.get("x-csrf-token", "")
+            if (
+                not cookie_token
+                or not header_token
+                or not secrets.compare_digest(cookie_token, header_token)
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": {
+                            "code": "CSRF_VALIDATION_FAILED",
+                            "message": "Security token missing or expired. Refresh and try again.",
+                        }
+                    },
+                )
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+    if request.cookies.get("pace_access") or request.url.path.startswith("/auth/"):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -85,8 +202,9 @@ def db_session():
 
 
 def token_for(user: User) -> str:
+    access_minutes = int(os.getenv("ACCESS_TOKEN_MINUTES", "20"))
     return jwt.encode(
-        {"sub": str(user.id), "exp": datetime.now(UTC) + timedelta(minutes=20)},
+        {"sub": str(user.id), "exp": datetime.now(UTC) + timedelta(minutes=access_minutes)},
         JWT_SECRET,
         algorithm="HS256",
     )
@@ -229,32 +347,30 @@ def health():
 
 
 @app.post("/auth/login", response_model=SessionOut)
-def login(body: LoginBody, response: Response, db: Session = Depends(db_session)):
+def login(
+    body: LoginBody,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    key = login_key(request, body.email)
+    check_login_rate(key)
     user = db.scalar(select(User).where(User.email == body.email.lower()))
     if not user or not password_hash.verify(body.password, user.password_hash):
+        record_login_failure(key)
         raise HTTPException(401, "Email or password is incorrect.")
     if not user.is_active:
+        record_login_failure(key)
         raise HTTPException(403, "This account has been deactivated.")
-    response.set_cookie(
-        "pace_access",
-        token_for(user),
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=1200,
-        path="/",
-    )
-    response.set_cookie(
-        "pace_refresh",
-        issue_refresh(db, user),
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=int(os.getenv("REFRESH_TOKEN_DAYS", "14")) * 86400,
-        path="/auth",
-    )
+    clear_login_failures(key)
+    set_session_cookies(response, user, issue_refresh(db, user))
     return SessionOut(
-        id=user.id, name=user.name, email=user.email, role=user.role, branch_id=user.branch_id
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        branch_id=user.branch_id,
+        language_preference=user.language_preference,
     )
 
 
@@ -273,26 +389,19 @@ def refresh(request: Request, response: Response, db: Session = Depends(db_sessi
         raise HTTPException(401, "Account is unavailable.")
     session.revoked_at = now
     db.commit()
-    response.set_cookie(
-        "pace_access",
-        token_for(user),
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=1200,
-        path="/",
-    )
-    response.set_cookie(
-        "pace_refresh",
+    set_session_cookies(
+        response,
+        user,
         issue_refresh(db, user),
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=int(os.getenv("REFRESH_TOKEN_DAYS", "14")) * 86400,
-        path="/auth",
+        request.cookies.get("pace_csrf"),
     )
     return SessionOut(
-        id=user.id, name=user.name, email=user.email, role=user.role, branch_id=user.branch_id
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        branch_id=user.branch_id,
+        language_preference=user.language_preference,
     )
 
 
@@ -307,13 +416,37 @@ def logout(request: Request, response: Response, db: Session = Depends(db_sessio
             db.commit()
     response.delete_cookie("pace_access", path="/")
     response.delete_cookie("pace_refresh", path="/auth")
+    response.delete_cookie("pace_csrf", path="/")
     return {"status": "signed_out"}
 
 
 @app.get("/auth/me", response_model=SessionOut)
 def me(user: User = Depends(current_user)):
     return SessionOut(
-        id=user.id, name=user.name, email=user.email, role=user.role, branch_id=user.branch_id
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        branch_id=user.branch_id,
+        language_preference=user.language_preference,
+    )
+
+
+@app.post("/auth/preferences", response_model=SessionOut)
+def update_preferences(
+    body: PreferenceBody,
+    user: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    user.language_preference = body.language_preference
+    db.commit()
+    return SessionOut(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        branch_id=user.branch_id,
+        language_preference=user.language_preference,
     )
 
 

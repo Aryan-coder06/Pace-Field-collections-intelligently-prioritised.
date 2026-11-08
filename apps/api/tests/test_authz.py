@@ -197,7 +197,10 @@ def client():
 
 
 def login(c, email):
-    return c.post("/auth/login", json={"email": email, "password": "correct horse battery"})
+    response = c.post("/auth/login", json={"email": email, "password": "correct horse battery"})
+    if response.status_code == 200 and c.cookies.get("pace_csrf"):
+        c.headers["X-CSRF-Token"] = c.cookies.get("pace_csrf")
+    return response
 
 
 def test_login_and_me(client):
@@ -214,6 +217,30 @@ def test_failed_login(client):
     )
 
 
+def test_login_throttling_and_csrf_protection(client):
+    for _ in range(5):
+        assert (
+            client.post(
+                "/auth/login",
+                json={"email": "throttle@example.com", "password": "wrong"},
+            ).status_code
+            == 401
+        )
+    limited = client.post(
+        "/auth/login", json={"email": "throttle@example.com", "password": "wrong"}
+    )
+    assert limited.status_code == 429
+    assert limited.json()["detail"]["code"] == "LOGIN_RATE_LIMITED"
+
+    assert login(client, "officer@example.com").status_code == 200
+    csrf = client.headers.pop("X-CSRF-Token")
+    blocked = client.post("/auth/logout")
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"]["code"] == "CSRF_VALIDATION_FAILED"
+    client.headers["X-CSRF-Token"] = csrf
+    assert client.post("/auth/logout").status_code == 200
+
+
 def test_refresh_rotates_and_logout_revokes(client):
     assert login(client, "officer@example.com").status_code == 200
     old_refresh = client.cookies.get("pace_refresh")
@@ -221,6 +248,7 @@ def test_refresh_rotates_and_logout_revokes(client):
     assert client.cookies.get("pace_refresh") != old_refresh
     client.cookies.set("pace_refresh", old_refresh, path="/auth")
     assert client.post("/auth/refresh").status_code == 401
+    client.cookies.delete("pace_refresh", path="/auth")
     assert login(client, "officer@example.com").status_code == 200
     assert client.post("/auth/logout").status_code == 200
     assert client.post("/auth/refresh").status_code == 401
@@ -643,6 +671,69 @@ def test_offline_sync_acknowledges_idempotently_and_detects_conflicts(client):
     rejected = client.post("/sync/events", json={"events": [unauthorized]}).json()["results"][0]
     assert rejected["status"] == "REJECTED"
     assert rejected["error"]["code"] == "ACCOUNT_ACCESS_REVOKED"
+
+
+def test_reassigned_offline_event_is_preserved_as_audited_conflict(client):
+    assert login(client, "manager@example.com").status_code == 200
+    loan_id = client.test_ids["loan"]
+    assignment = next(
+        row for row in client.get("/manager/assignments").json() if row["id"] == loan_id
+    )
+    assert (
+        client.post(
+            "/manager/assignments/reassign",
+            json={
+                "loan_id": loan_id,
+                "officer_id": 4,
+                "expected_version": assignment["version"],
+                "reason": "Route ownership changed during offline work",
+            },
+        ).status_code
+        == 200
+    )
+    assert login(client, "officer@example.com").status_code == 200
+    event_id = str(uuid4())
+    result = client.post(
+        "/sync/events",
+        json={
+            "events": [
+                {
+                    "client_event_id": event_id,
+                    "event_type": "COLLECTION_OUTCOME",
+                    "entity_id": str(loan_id),
+                    "client_occurred_at": datetime.now(UTC).isoformat(),
+                    "base_version": assignment["version"],
+                    "payload": {
+                        "outcome_type": "NOT_REACHABLE",
+                        "notes": "",
+                        "location_status": "UNAVAILABLE",
+                    },
+                }
+            ]
+        },
+    ).json()["results"][0]
+    assert result["status"] == "CONFLICT"
+    assert result["error"]["code"] == "ASSIGNMENT_REASSIGNED"
+    generator = client.app.dependency_overrides[db_session]()
+    db = next(generator)
+    event = db.scalar(
+        select(AuditEvent).where(
+            AuditEvent.action == "Offline sync conflict",
+            AuditEvent.entity_id == str(loan_id),
+        )
+    )
+    assert event is not None
+    assert event.metadata_json["client_event_id"] == event_id
+    db.close()
+    generator.close()
+
+
+def test_language_preference_is_persisted(client):
+    assert login(client, "officer@example.com").status_code == 200
+    updated = client.post("/auth/preferences", json={"language_preference": "hi"})
+    assert updated.status_code == 200
+    assert updated.json()["language_preference"] == "hi"
+    assert client.get("/auth/me").json()["language_preference"] == "hi"
 
 
 def test_explainable_model_training_and_priority_override(client):

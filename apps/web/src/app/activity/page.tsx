@@ -10,6 +10,7 @@ import {
   retryConflict,
   syncNow,
 } from "@/lib/offline";
+import { OfficerBottomNav } from "@/components/officer-bottom-nav";
 type Event = {
   time: string;
   officer: string;
@@ -27,6 +28,7 @@ export default function ActivityPage() {
     queryFn: async () => {
       const me =
         client.getQueryData<User>(["me"]) ?? (await request<User>("/auth/me"));
+      if (me.role === "FIELD_OFFICER") await syncNow(me);
       const events = await request<Event[]>(
         me.role === "FIELD_OFFICER"
           ? "/officer/recent-activity"
@@ -66,57 +68,55 @@ export default function ActivityPage() {
           </div>
         ) : (
           <>
-            {q
-              .data!.outbox.filter((event) => event.sync_status !== "SYNCED")
-              .map((event) => (
-                <div
-                  className={`surface activity-card local-event ${event.sync_status.toLowerCase()}`}
-                  key={event.client_event_id}
-                >
-                  <Clock3 size={17} />
-                  <span>
-                    <b>{event.payload.outcome_type.replaceAll("_", " ")}</b>
-                    <small>
-                      Device event · {event.sync_status}
-                      {event.last_error ? ` · ${event.last_error}` : ""}
-                    </small>
-                    <span className="local-event-actions">
-                      {event.sync_status === "CONFLICT" && user && (
-                        <button
-                          onClick={async () => {
-                            const latest = await request<{
-                              items: import("@/lib/api").Loan[];
-                            }>("/officer/today");
-                            await cacheOfficerQueue(user, latest.items);
-                            await retryConflict(event.client_event_id, user);
-                            await syncNow(user);
-                            await q.refetch();
-                          }}
-                        >
-                          Retry with refreshed assignment
-                        </button>
-                      )}
-                      {(event.sync_status === "CONFLICT" ||
-                        event.sync_status === "REJECTED") && (
-                        <button
-                          onClick={async () => {
-                            await discardTerminalEvent(event.client_event_id);
-                            await q.refetch();
-                          }}
-                        >
-                          Discard device copy
-                        </button>
-                      )}
-                    </span>
+            {q.data!.outbox.slice(0, 10).map((event) => (
+              <div
+                className={`surface activity-card local-event ${event.sync_status.toLowerCase()}`}
+                key={event.client_event_id}
+              >
+                <Clock3 size={17} />
+                <span>
+                  <b>{event.payload.outcome_type.replaceAll("_", " ")}</b>
+                  <small>
+                    Device event · {event.sync_status}
+                    {event.last_error ? ` · ${event.last_error}` : ""}
+                  </small>
+                  <span className="local-event-actions">
+                    {event.sync_status === "CONFLICT" && user && (
+                      <button
+                        onClick={async () => {
+                          const latest = await request<{
+                            items: import("@/lib/api").Loan[];
+                          }>("/officer/today");
+                          await cacheOfficerQueue(user, latest.items);
+                          await retryConflict(event.client_event_id, user);
+                          await syncNow(user);
+                          await q.refetch();
+                        }}
+                      >
+                        Retry with refreshed assignment
+                      </button>
+                    )}
+                    {(event.sync_status === "CONFLICT" ||
+                      event.sync_status === "REJECTED") && (
+                      <button
+                        onClick={async () => {
+                          await discardTerminalEvent(event.client_event_id);
+                          await q.refetch();
+                        }}
+                      >
+                        Discard device copy
+                      </button>
+                    )}
                   </span>
-                  <time>
-                    {new Date(event.queued_at).toLocaleTimeString("en-IN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </time>
-                </div>
-              ))}
+                </span>
+                <time>
+                  {new Date(event.queued_at).toLocaleTimeString("en-IN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </time>
+              </div>
+            ))}
             {q.data!.events.map((e, i) => (
               <div className="surface activity-card" key={i}>
                 <Clock3 size={17} />
@@ -155,20 +155,7 @@ export default function ActivityPage() {
           </>
         )}
       </main>
-      <nav className="bottom-nav">
-        <Link href="/">
-          <span>Today</span>
-        </Link>
-        <Link href="/promises">
-          <span>Promises</span>
-        </Link>
-        <Link className="selected" href="/activity">
-          <span>Activity</span>
-        </Link>
-        <Link href="/profile">
-          <span>Profile</span>
-        </Link>
-      </nav>
+      <OfficerBottomNav active="activity" />
     </div>
   );
 }
